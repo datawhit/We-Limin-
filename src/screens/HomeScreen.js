@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useFonts, Caveat_500Medium, Caveat_700Bold } from '@expo-google-fonts/caveat';
+import Svg, { Path } from 'react-native-svg';
 import { AppContext } from '../lib/AppContext';
 import ProfileAvatar from '../components/ProfileAvatar';
 import {
@@ -19,31 +21,101 @@ import MessagesScreen from './MessagesScreen';
 import { getUnreadInviteCount } from '../lib/supabase';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const BADGE_DOT_COLORS = [COLORS.turquoise, COLORS.palmGreen, COLORS.amber];
 
-// Safe TIER accessor — never crash on undefined / unknown tier values
-// (stale activity rows, custom activities with no tier set, the brief
-// window before a spin preview is populated, etc.)
+// Safe TIER accessor — never crash on undefined / unknown tier values.
 const TIER_FALLBACK = { bg: COLORS.cream, label: '', text: COLORS.dark, dot: COLORS.muted };
 const tierOf = (key) => (key && TIER[key]) || TIER_FALLBACK;
 
 // Vibe filter pool for the spin.
 const VIBES = [
-  { id: 'chill', label: 'Chill', emoji: '🌿', bg: '#D6F0F4', fg: COLORS.turquoise },
-  { id: 'bold',  label: 'Bold',  emoji: '🔥', bg: '#FCEDC9', fg: COLORS.deepAmber },
-  { id: 'wild',  label: 'Wild',  emoji: '😈', bg: '#D4E8DD', fg: COLORS.palmGreen },
+  { id: 'chill', label: 'Chill', emoji: '🌿', bg: '#DDF1E2', fg: COLORS.palmGreen },
+  { id: 'bold',  label: 'Bold',  emoji: '🔥', bg: '#FBE7C6', fg: COLORS.deepAmber },
+  { id: 'wild',  label: 'Wild',  emoji: '😈', bg: '#E4DEF6', fg: '#5B3FA3' },
 ];
 
-// Approximate floating-badge decoration around the avatar.
-const STICKER_OFFSETS = [
-  { x:  -8, y:  -4, rot: -14, size: 28 },
-  { x:  72, y: -10, rot:  12, size: 24 },
-  { x: -14, y:  62, rot:  -8, size: 26 },
-];
+// Washi-tape color cycle for the polaroids in The Lineup.
+const TAPE_COLORS = ['#F4C3D2', '#B6D4E8', '#F2C8A0', '#D7CFEC', '#F6D78D'];
+const POLAROID_TILTS = ['-2deg', '2deg', '-1.5deg', '2deg', '-2.5deg'];
+const POLAROID_EMOJI_BGS = ['#FDEED7', '#D6F0F4', '#FCDCD0', '#E4DEF6', '#D6F0DD'];
+
+// ─── Decorative SVG doodles ──────────────────────────────
+function StarDoodle({ size = 16, color = COLORS.coral, opacity = 0.35, style }) {
+  return (
+    <View pointerEvents="none" style={[{ position: 'absolute' }, style]}>
+      <Svg width={size} height={size} viewBox="0 0 20 20">
+        <Path
+          d="M10 1 L11.8 7.4 L18.5 8 L13.4 12.2 L15 19 L10 15.2 L5 19 L6.6 12.2 L1.5 8 L8.2 7.4 Z"
+          fill={color} fillOpacity={opacity}
+        />
+      </Svg>
+    </View>
+  );
+}
+
+function HeartDoodle({ size = 16, color = COLORS.coral, opacity = 0.3, style }) {
+  return (
+    <View pointerEvents="none" style={[{ position: 'absolute' }, style]}>
+      <Svg width={size} height={size} viewBox="0 0 20 20">
+        <Path
+          d="M10 17 C 4 12 1 9 1 6 C 1 3.5 3 2 5 2 C 7 2 9 3.5 10 5 C 11 3.5 13 2 15 2 C 17 2 19 3.5 19 6 C 19 9 16 12 10 17 Z"
+          fill={color} fillOpacity={opacity}
+        />
+      </Svg>
+    </View>
+  );
+}
+
+function SparkDoodle({ size = 14, color = COLORS.coral, opacity = 0.4, style }) {
+  return (
+    <View pointerEvents="none" style={[{ position: 'absolute' }, style]}>
+      <Svg width={size} height={size} viewBox="0 0 14 14">
+        <Path d="M7 0 V14 M0 7 H14 M2 2 L12 12 M12 2 L2 12" stroke={color} strokeWidth={1.5} strokeLinecap="round" opacity={opacity} />
+      </Svg>
+    </View>
+  );
+}
+
+// Hand-drawn coral underline that sits under a headline word.
+function UnderlineDoodle({ width = 60, color = COLORS.coral, style }) {
+  return (
+    <View pointerEvents="none" style={[{ position: 'absolute' }, style]}>
+      <Svg width={width} height={10} viewBox="0 0 60 10">
+        <Path
+          d="M1 6 Q 12 1, 22 5 T 45 5 T 59 6"
+          stroke={color} strokeWidth={2.5} strokeLinecap="round" fill="none"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+// Curly "spin the lime ↩" arrow doodle.
+function SpinArrowDoodle({ style }) {
+  return (
+    <View pointerEvents="none" style={[{ position: 'absolute' }, style]}>
+      <Svg width={50} height={28} viewBox="0 0 50 28">
+        <Path
+          d="M2 4 Q 22 -2, 36 8 Q 44 14, 30 22"
+          stroke={COLORS.dark} strokeWidth={1.4} strokeLinecap="round" fill="none"
+        />
+        <Path
+          d="M30 22 L34 20 M30 22 L32 26"
+          stroke={COLORS.dark} strokeWidth={1.4} strokeLinecap="round" fill="none"
+        />
+      </Svg>
+    </View>
+  );
+}
 
 export default function HomeScreen() {
+  // ─── PRESERVED: all hooks, state, effects, AppContext, navigation ───
   const { profile, myBadges, setMyBadges } = useContext(AppContext);
   const navigation = useNavigation();
+
+  // Handwritten font — falls back to system if not yet loaded.
+  const [fontsLoaded] = useFonts({ Caveat_500Medium, Caveat_700Bold });
+  const HAND_500 = fontsLoaded ? 'Caveat_500Medium' : undefined;
+  const HAND_700 = fontsLoaded ? 'Caveat_700Bold' : undefined;
 
   const [memories, setMemories] = useState([]);
   const [members, setMembers]   = useState([]);
@@ -56,15 +128,12 @@ export default function HomeScreen() {
   const [unreadCount, setUnreadCount] = useState(0);
   const mondayNudge = isMondayToday();
 
-  // Refresh unread invite count on mount + every time the messages
-  // modal closes (user may have just read everything).
   const refreshUnread = async () => {
     try { setUnreadCount(await getUnreadInviteCount(profile.id)); }
     catch { /* table may not exist yet — silent */ }
   };
   useEffect(() => { refreshUnread(); }, []);
 
-  // Per-session: pick a tagline once on mount.
   const sessionTagline = useMemo(
     () => HOME_TAGLINES[Math.floor(Math.random() * HOME_TAGLINES.length)],
     []
@@ -75,21 +144,16 @@ export default function HomeScreen() {
   const total = ACTIVITIES.length;
 
   // ─── Spin / vibe state ───
-  const [vibe, setVibe] = useState(null);          // null | 'chill' | 'bold' | 'wild'
+  const [vibe, setVibe] = useState(null);
   const [spinning, setSpinning] = useState(false);
-  const [spinPick, setSpinPick] = useState(null);  // landed activity
-  const [previewPick, setPreviewPick] = useState(null); // shown while spinning
+  const [spinPick, setSpinPick] = useState(null);
+  const [previewPick, setPreviewPick] = useState(null);
   const spinRotation = useRef(new Animated.Value(0)).current;
 
   const eligible = useMemo(
     () => (vibe ? ACTIVITIES.filter(a => a.tier === vibe) : ACTIVITIES),
     [vibe]
   );
-
-  // Badge unlock celebration now lives in BadgeUnlockModal at the
-  // source (ActivityDetailScreen / AddMemoryScreen). Home no longer
-  // double-fires a toast when the user returns.
-
 
   const load = async () => {
     try {
@@ -112,16 +176,12 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  // ─── Spin ───
   const startSpin = () => {
     if (!eligible.length || spinning) return;
-    // Preset a preview so the result block has data on the first
-    // render — avoids a transient null tier reference.
     setPreviewPick(eligible[Math.floor(Math.random() * eligible.length)]);
     setSpinning(true);
     setSpinPick(null);
 
-    // Continuous rotation animation
     spinRotation.setValue(0);
     Animated.loop(
       Animated.timing(spinRotation, {
@@ -129,7 +189,6 @@ export default function HomeScreen() {
       })
     ).start();
 
-    // Random cycling preview
     let count = 0;
     const interval = setInterval(() => {
       setPreviewPick(eligible[Math.floor(Math.random() * eligible.length)]);
@@ -149,31 +208,17 @@ export default function HomeScreen() {
     navigation.getParent()?.navigate('ActivityDetailModal', { activity, isModal: true });
   };
 
-  // ─── AI Lime Finder ───
   const limeFind = () => {
-    // For now: AI Finder = surprise pick from all activities, opens modal
-    // where the in-screen AI suggestions populate venues for that activity.
     const pick = ACTIVITIES[Math.floor(Math.random() * ACTIVITIES.length)];
     openDetail(pick);
   };
 
-  // Recent badges (newest 3) → emoji list for the fanning dots
-  const recentBadgeEmojis = useMemo(() => {
-    const ids = myBadges.slice(0, 3);
-    return ids.map(id => ACTIVITIES.find(x => x.id === id)?.badge || null);
-  }, [myBadges]);
-
-  // Sticker emojis around the avatar (decorative — show recent or sample badges)
-  const stickerEmojis = useMemo(() => {
-    if (myBadges.length >= 3) {
-      return myBadges.slice(0, 3).map(id => ACTIVITIES.find(x => x.id === id)?.badge || '🍋');
-    }
-    return ['🍋', '🌴', '🏖️']; // friendly default while empty
-  }, [myBadges]);
-
   const ratingOf = (label) => RATINGS.find(r => r.label === label) || RATINGS[0];
 
-  const recentMemories = memories.slice(0, 3);
+  const recentMemories = memories.slice(0, 4);
+
+  // Leaderboard is computed but no longer rendered in the refreshed
+  // layout — kept memoed in case other call sites consume it.
   const leaderboard = useMemo(() => {
     return [...members]
       .map(m => ({ ...m, count: m.badges?.[0]?.count || 0 }))
@@ -181,30 +226,47 @@ export default function HomeScreen() {
       .slice(0, 6);
   }, [members]);
 
-  // Tier emoji for current tier
   const nextTier = tier.next;
-  const morePhrase = nextTier
-    ? `${tier.badgesToNext} more till ${nextTier.emoji} ${nextTier.name}`
-    : `You ARE the function`;
 
   const spinSpin = spinRotation.interpolate({
     inputRange: [0, 1], outputRange: ['0deg', '360deg'],
   });
 
+  // ─── The Lineup data — 5 polaroids + "add a dream" tile ─────
+  // Pulls from unearned ACTIVITIES so it always has content. If the
+  // user just spun, the spin result takes one slot with "from spin".
+  const lineup = useMemo(() => {
+    const unearned = ACTIVITIES.filter(a => !myBadges.includes(a.id));
+    const picks = [];
+    if (spinPick && !myBadges.includes(spinPick.id)) {
+      picks.push({ activity: spinPick, pill: 'from spin' });
+    }
+    let i = 0;
+    while (picks.length < 5 && i < unearned.length) {
+      const a = unearned[i++];
+      if (picks.some(p => p.activity.id === a.id)) continue;
+      picks.push({
+        activity: a,
+        pill: picks.length === 0 ? 'up next' : picks.length === 1 ? 'next up' : null,
+      });
+    }
+    return picks;
+  }, [myBadges, spinPick]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.dark} />}
+        showsVerticalScrollIndicator={false}
       >
-        {/* ─── Top bar ─── */}
+        {/* ─── Greeting + icons ─── */}
         <View style={styles.topBar}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Hey {profile.name}</Text>
-            <Text style={styles.subline}>{dayName} · {sessionTagline}</Text>
+            <Text style={styles.greeting}>Hey {profile.name} ✨</Text>
+            <Text style={styles.subline}>{dayName} · {sessionTagline} 🌴</Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity onPress={() => setMessagesOpen(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Text style={styles.iconText}>🔔</Text>
               {unreadCount > 0 && (
@@ -219,99 +281,16 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <AvailabilityModal visible={availOpen} onClose={() => setAvailOpen(false)} />
-        <SettingsModal
-          visible={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          onOpenAvailability={() => { setSettingsOpen(false); setAvailOpen(true); }}
-        />
-        <EditProfileModal visible={editOpen} onClose={() => setEditOpen(false)} initialFocus="profile" />
-        <TiersScreen visible={tiersOpen} onClose={() => setTiersOpen(false)} />
-        <MessagesScreen
-          visible={messagesOpen}
-          onClose={() => { setMessagesOpen(false); refreshUnread(); }}
-        />
-
-        {/* ─── Profile / game card ─── */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileRow}>
-            {/* Avatar + fanning + floating sticker decorations */}
-            <View style={styles.avatarArea}>
-              {/* Floating decorative stickers (rotated badges) */}
-              {STICKER_OFFSETS.map((s, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.sticker,
-                    {
-                      left: s.x, top: s.y,
-                      width: s.size, height: s.size, borderRadius: s.size / 2,
-                      transform: [{ rotate: `${s.rot}deg` }],
-                      backgroundColor: BADGE_DOT_COLORS[i % BADGE_DOT_COLORS.length] + '33', // 20% alpha
-                    },
-                  ]}
-                >
-                  <Text style={{ fontSize: s.size * 0.55 }}>{stickerEmojis[i]}</Text>
-                </View>
-              ))}
-
-              <TouchableOpacity activeOpacity={0.85} onPress={() => setEditOpen(true)} style={styles.avatarTap}>
-                <View style={styles.avatarRing}>
-                  <ProfileAvatar profile={profile} size={74} />
-                </View>
-                <View style={styles.editPip}><Text style={{ fontSize: 10, color: '#fff', fontWeight: '700' }}>✎</Text></View>
-              </TouchableOpacity>
-
-              {/* Three earned-badge dots fanning from bottom-right */}
-              {[0, 45, 90].map((angle, i) => {
-                const rad = (angle * Math.PI) / 180;
-                const cx = 40 + 56 * Math.cos(rad);
-                const cy = 40 + 56 * Math.sin(rad);
-                const emoji = recentBadgeEmojis[i];
-                return (
-                  <View
-                    key={angle}
-                    style={[styles.fanDot, {
-                      left: cx - 12, top: cy - 12,
-                      backgroundColor: emoji ? BADGE_DOT_COLORS[i] : '#F0EAD8',
-                    }]}
-                  >
-                    {emoji
-                      ? <Text style={{ fontSize: 11 }}>{emoji}</Text>
-                      : <Text style={{ fontSize: 10, color: '#bbb' }}>·</Text>}
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Right column */}
-            <View style={{ flex: 1, marginLeft: 16 }}>
-              <Text style={styles.profileName} numberOfLines={1}>{profile.name}</Text>
-
-              <View style={styles.tierPill}>
-                <Text style={styles.tierPillText}>{tier.emoji} {tier.name}</Text>
-              </View>
-
-              <Text style={styles.badgeCountLine}>
-                <Text style={styles.badgeCountNum}>{myBadges.length}</Text>
-                <Text style={styles.badgeCountSlash}> / {total}</Text>
-                <Text style={styles.badgeCountWord}>  badges earned</Text>
-              </Text>
-              <Text style={styles.toNextLine}>{morePhrase}</Text>
-
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${Math.round(tier.progress * 100)}%` }]} />
-              </View>
-            </View>
-          </View>
-
-          <Text style={styles.tagline}>{tier.tagline}</Text>
-        </View>
-
-        {/* ─── Spin section — also acts as the AI Lime Finder ─── */}
+        {/* ─── Randomizer card ─── */}
         <View style={styles.spinCard}>
-          <Text style={styles.spinHeadline}>Where we limin' today?</Text>
-          <Text style={styles.spinSub}>Pick a vibe + spin the lime, or get an AI suggestion.</Text>
+          {/* Washi tape strip at top center */}
+          <View style={styles.washiTopCenter} />
+
+          <View style={styles.spinHeadlineWrap}>
+            <Text style={[styles.spinHeadline, HAND_500 && { fontFamily: HAND_500 }]}>where we limin' today?</Text>
+            <UnderlineDoodle width={64} style={{ right: 28, top: 30 }} />
+            <SparkDoodle size={18} color={COLORS.coral} opacity={0.9} style={{ right: 4, top: 0 }} />
+          </View>
 
           <View style={styles.vibeRow}>
             {VIBES.map(v => {
@@ -322,31 +301,41 @@ export default function HomeScreen() {
                   onPress={() => setVibe(on ? null : v.id)}
                   style={[
                     styles.vibeBtn,
-                    { backgroundColor: on ? v.fg : v.bg, borderColor: on ? v.fg : 'transparent' },
+                    { backgroundColor: v.bg, borderColor: on ? v.fg : 'rgba(255,255,255,0.7)' },
                   ]}
                 >
                   <Text style={styles.vibeEmoji}>{v.emoji}</Text>
-                  <Text style={[styles.vibeLabel, { color: on ? '#fff' : v.fg }]}>{v.label}</Text>
+                  <Text style={[styles.vibeLabel, { color: v.fg }]}>{v.label}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
 
-          <TouchableOpacity onPress={startSpin} disabled={spinning} activeOpacity={0.85} style={styles.spinBtnWrap}>
-            <Animated.View style={[styles.spinBtn, { transform: [{ rotate: spinSpin }] }]}>
-              <Text style={styles.spinSliceEmoji}>🍋</Text>
-            </Animated.View>
-            <Text style={styles.spinBtnLabel}>{spinning ? 'SHAKING…' : 'SPIN THE LIME'}</Text>
-            <Text style={styles.spinBtnSub}>
-              {vibe ? `${VIBES.find(v => v.id === vibe).emoji} ${VIBES.find(v => v.id === vibe).label} pool only` : 'All 59 in the pool'}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.spinBtnRow}>
+            <View style={{ width: 60 }} />
+            <TouchableOpacity onPress={startSpin} disabled={spinning} activeOpacity={0.85} style={styles.spinBtnWrap}>
+              <Animated.View style={[styles.spinBtn, { transform: [{ rotate: spinSpin }] }]}>
+                <Text style={styles.spinSliceEmoji}>🍋</Text>
+              </Animated.View>
+            </TouchableOpacity>
+            <View style={styles.spinHint}>
+              <SpinArrowDoodle style={{ left: -10, top: -4 }} />
+              <Text style={[styles.spinHintText, HAND_500 && { fontFamily: HAND_500 }]}>spin the{'\n'}lime</Text>
+            </View>
+          </View>
 
-          {/* AI suggestion entry — merged from the old standalone card */}
+          <Text style={styles.spinPool}>
+            {vibe
+              ? `${VIBES.find(v => v.id === vibe).emoji} ${VIBES.find(v => v.id === vibe).label} pool only`
+              : 'All 59 in the pool 🍋'}
+          </Text>
+
+          {/* Subtle "ask the lime" inline */}
           <TouchableOpacity onPress={limeFind} activeOpacity={0.85} style={styles.askLineBtn}>
             <Text style={styles.askLineText}>✨  or, ask the lime to pick →</Text>
           </TouchableOpacity>
 
+          {/* Vibe result after spin */}
           {(() => {
             const shown = previewPick || spinPick;
             if (!(spinning || spinPick) || !shown) return null;
@@ -356,9 +345,7 @@ export default function HomeScreen() {
                 <Text style={styles.spinResultEmoji}>{shown.emoji}</Text>
                 <Text style={styles.spinResultName}>{shown.name}</Text>
                 <View style={[styles.spinResultTier, { backgroundColor: t.bg }]}>
-                  <Text style={[styles.spinResultTierText, { color: t.text }]}>
-                    {t.label} tier
-                  </Text>
+                  <Text style={[styles.spinResultTierText, { color: t.text }]}>{t.label} tier</Text>
                 </View>
                 {spinPick && !spinning && (
                   <TouchableOpacity onPress={() => openDetail(spinPick)} style={styles.spinResultCta}>
@@ -370,19 +357,48 @@ export default function HomeScreen() {
           })()}
         </View>
 
-        {/* ─── Summer 2026 progress ─── */}
-        <View style={styles.summerCard}>
-          <Text style={styles.summerPalm}>🌴</Text>
-          <Text style={styles.summerEyebrow}>SUMMER 2026</Text>
-          <Text style={styles.summerHeadline}>Your summer story in progress</Text>
-          <View style={styles.summerStats}>
-            <Text style={styles.summerCount}>
-              <Text style={styles.summerCountNum}>{myBadges.length}</Text> / {total}
-            </Text>
-            <Text style={styles.summerCountLabel}>badges collected</Text>
+        {/* ─── THE LINEUP ─── */}
+        <View style={styles.lineupCard}>
+          {/* Decorative doodles scattered */}
+          <StarDoodle size={14} style={{ left: 2, top: 220 }} />
+          <HeartDoodle size={14} color="#E83E8C" opacity={0.4} style={{ right: 12, top: 220 }} />
+          <SparkDoodle size={12} color="#9B6BD3" opacity={0.5} style={{ right: 4, bottom: 16 }} />
+
+          <View style={styles.lineupHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.lineupEyebrow}>THE LINEUP 🍋</Text>
+              <Text style={[styles.lineupTitle, HAND_500 && { fontFamily: HAND_500 }]}>things i'm chasing</Text>
+              <Text style={styles.lineupSub}>{myBadges.length} of {total} lived · keep going 🌿</Text>
+            </View>
+            <TouchableOpacity onPress={() => navigation.navigate('Activities')} style={styles.addLineupBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.addLineupText}>+ add</Text>
+              <UnderlineDoodle width={32} style={{ right: 0, top: 18 }} />
+            </TouchableOpacity>
           </View>
-          <View style={styles.summerTrack}>
-            <View style={[styles.summerFill, { width: `${Math.round((myBadges.length / total) * 100)}%` }]} />
+
+          {/* 2-column polaroid grid */}
+          <View style={styles.grid}>
+            {lineup.map((p, i) => (
+              <View key={p.activity.id} style={styles.gridCell}>
+                <Polaroid
+                  item={p}
+                  index={i}
+                  onPress={() => openDetail(p.activity)}
+                />
+              </View>
+            ))}
+            {/* Add a dream tile */}
+            <View style={styles.gridCell}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Activities')}
+                activeOpacity={0.85}
+                style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
+              >
+                <Text style={styles.addPlus}>+</Text>
+                <Text style={styles.addDreamText}>add a dream</Text>
+                <UnderlineDoodle width={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -390,44 +406,22 @@ export default function HomeScreen() {
         {nextTier ? (
           <View style={styles.unlockCard}>
             <View style={styles.lockedBadge}>
-              <Text style={{ fontSize: 28, opacity: 0.45 }}>{nextTier.emoji}</Text>
+              <Text style={{ fontSize: 28, opacity: 0.5 }}>{nextTier.emoji}</Text>
               <View style={styles.lockBadge}><Text style={{ fontSize: 10 }}>🔒</Text></View>
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={styles.unlockEyebrow}>NEXT UNLOCK</Text>
               <Text style={styles.unlockName}>{nextTier.name} {nextTier.emoji}</Text>
-              <Text style={styles.unlockSub}>{tier.badgesToNext} more badges to go</Text>
+              <Text style={styles.unlockSub}>{tier.badgesToNext} more adventures to go</Text>
             </View>
+            {/* Palm sticker float */}
+            <Text style={styles.unlockPalm}>🌴</Text>
+            <SparkDoodle size={14} color={COLORS.coral} opacity={0.9} style={{ right: 90, top: -2 }} />
             <TouchableOpacity onPress={() => setTiersOpen(true)} style={styles.unlockCta}>
               <Text style={styles.unlockCtaText}>See all tiers</Text>
             </TouchableOpacity>
           </View>
         ) : null}
-
-        {/* ─── Squad leaderboard preview ─── */}
-        {leaderboard.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHead}>
-              <Text style={styles.sectionTitle}>🏆 Squad standings</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Squad')}>
-                <Text style={styles.linkText}>See all</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 4 }}>
-              {leaderboard.map((m, i) => {
-                const mAccent = m.accent_color || COLORS.coral;
-                return (
-                  <View key={m.id} style={styles.boardTile}>
-                    <View style={styles.boardRank}><Text style={styles.boardRankText}>{i + 1}</Text></View>
-                    <ProfileAvatar profile={m} size={52} ringColor={mAccent} />
-                    <Text style={styles.boardName} numberOfLines={1}>{m.name}</Text>
-                    <Text style={styles.boardCount}>{m.count} 🏅</Text>
-                  </View>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
 
         {/* ─── Squad Memories ─── */}
         <View style={styles.section}>
@@ -444,68 +438,72 @@ export default function HomeScreen() {
               <Text style={styles.emptyText}>No memories yet — bus' a lime</Text>
             </View>
           ) : (
-            recentMemories.map(m => {
-              const a = ACTIVITIES.find(x => x.id === m.activity_id);
-              const r = ratingOf(m.rating);
-              return (
-                <View key={m.id} style={styles.memCard}>
-                  {/* Photo with tape corners for scrapbook feel */}
-                  <View style={styles.memPhotoWrap}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 22 }}>
+              {recentMemories.map((m, i) => {
+                const a = ACTIVITIES.find(x => x.id === m.activity_id);
+                return (
+                  <View key={m.id} style={styles.memThumb}>
                     {m.photo_url ? (
-                      <Image source={{ uri: m.photo_url }} style={styles.memPhoto} />
+                      <Image source={{ uri: m.photo_url }} style={styles.memThumbImg} />
                     ) : (
-                      <View style={[styles.memPhoto, { backgroundColor: tierOf(a?.tier).bg || COLORS.softCoral, alignItems: 'center', justifyContent: 'center' }]}>
-                        <Text style={{ fontSize: 36 }}>{a?.emoji || '📸'}</Text>
+                      <View style={[styles.memThumbImg, { backgroundColor: tierOf(a?.tier).bg, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Text style={{ fontSize: 32 }}>{a?.emoji || '📸'}</Text>
                       </View>
                     )}
-                    <View style={[styles.tape, styles.tapeLeft]} />
-                    <View style={[styles.tape, styles.tapeRight]} />
-                    <View style={[styles.memRatingChip, { backgroundColor: r.color }]}>
-                      <Text style={[styles.memRatingText, { color: r.textColor }]}>{r.icon}</Text>
-                    </View>
+                    {/* Per-thumbnail decorative doodle */}
+                    {i === 0 && <StarDoodle size={14} color="#fff" opacity={0.9} style={{ left: 8, top: 8 }} />}
+                    {i === 1 && <HeartDoodle size={14} color="#fff" opacity={0.9} style={{ right: 10, bottom: 10 }} />}
+                    {i === 2 && <Text style={styles.thumbCrown}>👑</Text>}
+                    {i === 3 && <SparkDoodle size={14} color="#fff" opacity={0.9} style={{ left: 10, top: 10 }} />}
                   </View>
-                  <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={styles.memActivity} numberOfLines={1}>{a?.name || 'A lime'}</Text>
-                    {m.caption ? (
-                      <Text style={styles.memCaption} numberOfLines={2}>“{m.caption}”</Text>
-                    ) : null}
-                    <View style={styles.memMetaRow}>
-                      <Text style={styles.memAuthor} numberOfLines={1}>
-                        {m.profiles?.name || 'someone'} · {timeAgo(m.created_at)}
-                      </Text>
-                      <Text style={styles.memHeart}>♡</Text>
-                    </View>
-                  </View>
-                </View>
-              );
-            })
+                );
+              })}
+            </ScrollView>
           )}
         </View>
-
-        {/* ─── Secret badges teaser ─── */}
-        <View style={styles.secretCard}>
-          <Text style={styles.secretEyebrow}>HIDDEN STICKERS</Text>
-          <Text style={styles.secretHeadline}>Some badges you only earn by being outside</Text>
-          <View style={styles.secretRow}>
-            {[
-              { emoji: '🦉', name: 'Night Owl', hint: 'Out past midnight' },
-              { emoji: '🌅', name: 'Sunrise Crew', hint: 'See the sun come up' },
-              { emoji: '🚲', name: 'Spontaneous', hint: 'No plans, all plans' },
-            ].map(s => (
-              <View key={s.name} style={styles.secretTile}>
-                <View style={styles.secretEmojiWrap}>
-                  <Text style={{ fontSize: 26, opacity: 0.35 }}>{s.emoji}</Text>
-                  <Text style={styles.secretLock}>🔒</Text>
-                </View>
-                <Text style={styles.secretName}>{s.name}</Text>
-                <Text style={styles.secretHint}>{s.hint}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
       </ScrollView>
+
+      {/* ─── Modals (preserved) ─── */}
+      <AvailabilityModal visible={availOpen} onClose={() => setAvailOpen(false)} />
+      <SettingsModal
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenAvailability={() => { setSettingsOpen(false); setAvailOpen(true); }}
+      />
+      <EditProfileModal visible={editOpen} onClose={() => setEditOpen(false)} initialFocus="profile" />
+      <TiersScreen visible={tiersOpen} onClose={() => setTiersOpen(false)} />
+      <MessagesScreen
+        visible={messagesOpen}
+        onClose={() => { setMessagesOpen(false); refreshUnread(); }}
+      />
     </SafeAreaView>
+  );
+}
+
+// ─── Polaroid card (inline) ──────────────────────────────
+function Polaroid({ item, index, onPress }) {
+  const { activity, pill } = item;
+  const tilt = POLAROID_TILTS[index % POLAROID_TILTS.length];
+  const tapeColor = TAPE_COLORS[index % TAPE_COLORS.length];
+  const emojiBg = POLAROID_EMOJI_BGS[index % POLAROID_EMOJI_BGS.length];
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.polaroid, { transform: [{ rotate: tilt }] }]}>
+      <View style={[styles.washiTape, { backgroundColor: tapeColor }]} />
+      <View style={[styles.polaroidEmojiBox, { backgroundColor: emojiBg }]}>
+        <Text style={{ fontSize: 44 }}>{activity.emoji}</Text>
+      </View>
+      <Text style={styles.polaroidTitle} numberOfLines={1}>{activity.name}</Text>
+      <Text style={styles.polaroidEarns} numberOfLines={1}>
+        {pill === 'from spin'
+          ? `From spin · Earns ${activity.badge}`
+          : `Earns: ${activity.badge}`}
+      </Text>
+      {pill && pill !== 'from spin' && (
+        <View style={styles.polaroidPill}>
+          <Text style={styles.polaroidPillText}>{pill}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -524,11 +522,11 @@ function timeAgo(iso) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.cream },
-  scroll: { padding: 22, paddingBottom: 60 },
+  scroll: { padding: 22, paddingBottom: 64 },
 
   // Top bar
-  topBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
-  greeting: { fontSize: 28, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.7 },
+  topBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
+  greeting: { fontSize: 30, fontWeight: '500', color: COLORS.dark, letterSpacing: -0.8 },
   subline: { fontSize: 13, color: '#888', marginTop: 4 },
   iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.cardBorder, position: 'relative' },
   iconText: { fontSize: 18 },
@@ -542,142 +540,111 @@ const styles = StyleSheet.create({
   },
   unreadDotText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 
-  // Profile / game card
-  profileCard: {
-    backgroundColor: COLORS.warmWhite, borderRadius: 26, padding: 22, marginBottom: 22,
-    borderWidth: 1, borderColor: COLORS.cardBorder,
-  },
-  profileRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  avatarArea: { width: 116, height: 116, position: 'relative' },
-
-  // Floating sticker decoration
-  sticker: {
-    position: 'absolute',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: '#fff',
-    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 2 },
-    zIndex: 3,
-  },
-
-  avatarTap: { position: 'relative' },
-  avatarRing: {
-    width: 80, height: 80, borderRadius: 40, borderWidth: 3, borderColor: COLORS.coral,
-    overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.cream,
-  },
-  editPip: {
-    position: 'absolute', left: 56, top: 56,
-    width: 22, height: 22, borderRadius: 11, backgroundColor: COLORS.coral,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff',
-    zIndex: 4,
-  },
-  fanDot: {
-    position: 'absolute',
-    width: 24, height: 24, borderRadius: 12,
-    borderWidth: 2.5, borderColor: '#fff',
-    alignItems: 'center', justifyContent: 'center',
-    zIndex: 2,
-  },
-
-  profileName: { fontSize: 22, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.3, marginBottom: 8 },
-  tierPill: {
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.amber, height: 28, borderRadius: 14,
-    paddingHorizontal: 12, justifyContent: 'center', marginBottom: 10,
-  },
-  tierPillText: { fontSize: 13, fontWeight: '600', color: COLORS.deepAmber, letterSpacing: -0.2 },
-  badgeCountLine: { fontSize: 13, color: '#666' },
-  badgeCountNum:   { color: COLORS.dark, fontWeight: '700', fontSize: 14 },
-  badgeCountSlash: { color: COLORS.dark, fontWeight: '500' },
-  badgeCountWord:  { color: '#888' },
-  toNextLine: { fontSize: 13, color: '#999', marginTop: 2, marginBottom: 10 },
-
-  progressTrack: { height: 6, borderRadius: 3, backgroundColor: '#F0EAD8', overflow: 'hidden' },
-  progressFill: { height: 6, borderRadius: 3, backgroundColor: COLORS.coral },
-
-  tagline: { marginTop: 16, textAlign: 'center', fontSize: 11, color: '#888', fontStyle: 'italic' },
-
-  // Spin section
+  // Randomizer card
   spinCard: {
-    backgroundColor: COLORS.softCoral, borderRadius: 26, padding: 22, marginBottom: 22,
-    alignItems: 'center', overflow: 'hidden',
+    backgroundColor: '#FDE3DA', borderRadius: 28, padding: 24, marginBottom: 22,
+    overflow: 'hidden', alignItems: 'center', position: 'relative',
   },
-  spinEyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.8, color: COLORS.deepCoral, marginBottom: 6 },
-  spinHeadline: { fontSize: 22, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.4, marginBottom: 6, textAlign: 'center' },
-  spinSub: { fontSize: 12, color: COLORS.deepCoral, opacity: 0.85, marginBottom: 18, textAlign: 'center' },
-  askLineBtn: { marginTop: 16, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.6)' },
-  askLineText: { fontSize: 13, fontWeight: '700', color: COLORS.deepCoral, letterSpacing: 0.2, textAlign: 'center' },
-  vibeRow: { flexDirection: 'row', gap: 8, marginBottom: 20, alignSelf: 'stretch' },
-  vibeBtn: {
-    flex: 1, paddingVertical: 11, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, gap: 2,
+  washiTopCenter: {
+    position: 'absolute', top: 0, left: '36%', width: '28%', height: 18,
+    backgroundColor: '#F6D78D', opacity: 0.85,
+    transform: [{ rotate: '-3deg' }, { translateY: -6 }],
   },
-  vibeEmoji: { fontSize: 18 },
-  vibeLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3, marginTop: 2 },
 
+  spinHeadlineWrap: { width: '100%', alignItems: 'center', position: 'relative', marginTop: 8, marginBottom: 18 },
+  spinHeadline: { fontSize: 30, color: COLORS.dark, textAlign: 'center', lineHeight: 36 },
+
+  vibeRow: { flexDirection: 'row', gap: 10, marginBottom: 22, alignSelf: 'stretch' },
+  vibeBtn: {
+    flex: 1, paddingVertical: 11, borderRadius: 24,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    borderWidth: 1.5,
+  },
+  vibeEmoji: { fontSize: 16 },
+  vibeLabel: { fontSize: 14, fontWeight: '600' },
+
+  spinBtnRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
   spinBtnWrap: { alignItems: 'center' },
   spinBtn: {
-    width: 132, height: 132, borderRadius: 66,
-    backgroundColor: COLORS.limeGreen,
+    width: 96, height: 96, borderRadius: 48,
+    backgroundColor: '#A5D854',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 6, borderColor: '#fff',
-    shadowColor: COLORS.coral, shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 6,
+    borderWidth: 5, borderColor: '#fff',
+    shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3,
   },
-  spinSliceEmoji: { fontSize: 64 },
-  spinBtnLabel: { fontSize: 13, fontWeight: '800', color: COLORS.deepCoral, letterSpacing: 1.4, marginTop: 14 },
-  spinBtnSub: { fontSize: 11, color: '#A56657', marginTop: 4 },
+  spinSliceEmoji: { fontSize: 50 },
+  spinHint: { width: 60, paddingLeft: 6, justifyContent: 'center', position: 'relative' },
+  spinHintText: { fontSize: 18, color: COLORS.dark, lineHeight: 22, marginTop: 16, marginLeft: 8 },
+
+  spinPool: { marginTop: 10, fontSize: 13, color: '#6B6B6B' },
+
+  askLineBtn: { marginTop: 14, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.6)' },
+  askLineText: { fontSize: 13, fontWeight: '700', color: COLORS.deepCoral, letterSpacing: 0.2, textAlign: 'center' },
 
   spinResult: {
-    marginTop: 22, alignSelf: 'stretch',
-    backgroundColor: '#fff', borderRadius: 20, padding: 22, alignItems: 'center',
+    marginTop: 16, alignSelf: 'stretch',
+    backgroundColor: '#fff', borderRadius: 20, padding: 18, alignItems: 'center',
     borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)',
   },
-  spinResultEmoji: { fontSize: 52, marginBottom: 6 },
-  spinResultName: { fontSize: 20, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.3, marginBottom: 10, textAlign: 'center' },
-  spinResultTier: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 10, marginBottom: 14 },
-  spinResultTierText: { fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  spinResultCta: { backgroundColor: COLORS.coral, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12 },
-  spinResultCtaText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  spinResultEmoji: { fontSize: 46, marginBottom: 4 },
+  spinResultName: { fontSize: 18, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.3, marginBottom: 8, textAlign: 'center' },
+  spinResultTier: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, marginBottom: 12 },
+  spinResultTierText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
+  spinResultCta: { backgroundColor: COLORS.coral, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
+  spinResultCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  // AI Lime Finder
-  aiCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#E8F4F6', borderRadius: 22, padding: 18, marginBottom: 22,
-    borderWidth: 1, borderColor: '#C6E5EB',
+  // The Lineup card
+  lineupCard: {
+    backgroundColor: '#FAF1DD', borderRadius: 28, padding: 22, marginBottom: 22,
+    borderWidth: 1, borderColor: '#EEDFB3', position: 'relative', overflow: 'hidden',
   },
-  aiSparkle: {
-    width: 44, height: 44, borderRadius: 14, backgroundColor: '#fff',
+  lineupHead: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
+  lineupEyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 2, color: COLORS.deepCoral },
+  lineupTitle: { fontSize: 26, color: COLORS.dark, marginTop: 2, letterSpacing: -0.4, lineHeight: 32 },
+  lineupSub: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 4 },
+  addLineupBtn: { paddingTop: 6, paddingRight: 0, position: 'relative' },
+  addLineupText: { color: COLORS.coral, fontSize: 16, fontWeight: '700' },
+
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 22 },
+  gridCell: { width: '47%' },
+
+  polaroid: {
+    backgroundColor: '#fff', borderRadius: 10, paddingTop: 16, paddingHorizontal: 10, paddingBottom: 14,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 2,
+    position: 'relative', minHeight: 184,
+  },
+  washiTape: {
+    position: 'absolute', top: -8, left: '25%', width: '50%', height: 14,
+    opacity: 0.85, transform: [{ rotate: '-3deg' }],
+  },
+  polaroidEmojiBox: {
+    width: '100%', aspectRatio: 1.15, borderRadius: 6,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+  },
+  polaroidTitle: { fontSize: 14, fontWeight: '700', color: COLORS.dark, marginBottom: 2, letterSpacing: -0.2 },
+  polaroidEarns: { fontSize: 11, color: '#888' },
+  polaroidPill: { alignSelf: 'flex-start', marginTop: 10, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FCEDC9' },
+  polaroidPillText: { fontSize: 11, fontWeight: '700', color: COLORS.deepAmber },
+
+  polaroidEmpty: {
+    minHeight: 184,
+    borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.18)',
     alignItems: 'center', justifyContent: 'center',
+    position: 'relative',
   },
-  aiTitle: { fontSize: 16, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  aiSub: { fontSize: 12, color: '#0F6E7B', marginTop: 3 },
-  aiCta: { backgroundColor: COLORS.turquoise, paddingHorizontal: 14, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  aiCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  addPlus: { fontSize: 36, color: '#888', marginBottom: 6 },
+  addDreamText: { fontSize: 13, color: '#666', fontWeight: '600' },
 
-  // Summer 2026
-  summerCard: {
-    backgroundColor: '#FCF1D7', borderRadius: 24, padding: 22, marginBottom: 22,
-    borderWidth: 1, borderColor: '#F2E3B9', overflow: 'hidden',
-  },
-  summerPalm: { position: 'absolute', right: -2, bottom: -8, fontSize: 86, opacity: 0.18 },
-  summerEyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.8, color: COLORS.deepAmber, marginBottom: 6 },
-  summerHeadline: { fontSize: 18, fontWeight: '600', color: COLORS.dark, marginBottom: 12, letterSpacing: -0.2 },
-  summerStats: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 10 },
-  summerCount: { fontSize: 24, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.4 },
-  summerCountNum: { color: COLORS.deepAmber },
-  summerCountLabel: { fontSize: 12, color: '#8B6F2F', fontWeight: '600' },
-  summerTrack: { height: 8, borderRadius: 4, backgroundColor: '#F2E3B9', overflow: 'hidden' },
-  summerFill: { height: 8, borderRadius: 4, backgroundColor: COLORS.amber },
-
-  // Next Unlock — light card with coral left border
+  // Next Unlock — light coral-bordered card
   unlockCard: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.cream, borderRadius: 24, padding: 18, marginBottom: 22,
+    backgroundColor: COLORS.cream, borderRadius: 24, padding: 16, marginBottom: 22,
     borderWidth: 1, borderColor: COLORS.cardBorder,
     borderLeftWidth: 4, borderLeftColor: COLORS.coral,
+    position: 'relative', overflow: 'hidden',
   },
   lockedBadge: {
-    width: 56, height: 56, borderRadius: 16, backgroundColor: '#fff',
+    width: 54, height: 54, borderRadius: 14, backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: COLORS.cardBorder, borderStyle: 'dashed',
     position: 'relative',
@@ -690,52 +657,21 @@ const styles = StyleSheet.create({
   unlockEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: COLORS.deepCoral },
   unlockName: { fontSize: 16, fontWeight: '700', color: COLORS.dark, marginTop: 4, letterSpacing: -0.2 },
   unlockSub: { fontSize: 12, color: '#888', marginTop: 2 },
+  unlockPalm: { position: 'absolute', right: 110, top: 8, fontSize: 26, transform: [{ rotate: '12deg' }] },
   unlockCta: { backgroundColor: COLORS.coral, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 11 },
   unlockCtaText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   // Sections
   section: { marginBottom: 22 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  linkText: { fontSize: 13, color: '#888', fontWeight: '600' },
+  linkText: { fontSize: 13, color: COLORS.coral, fontWeight: '700' },
 
-  // Leaderboard
-  boardTile: { width: 80, alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 6, borderWidth: 1, borderColor: COLORS.cardBorder, position: 'relative' },
-  boardRank: { position: 'absolute', top: -8, left: -4, width: 22, height: 22, borderRadius: 11, backgroundColor: COLORS.amber, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
-  boardRankText: { fontSize: 10, fontWeight: '700', color: COLORS.deepAmber },
-  boardName: { fontSize: 12, fontWeight: '700', color: COLORS.dark, marginTop: 8, maxWidth: 70 },
-  boardCount: { fontSize: 11, color: '#999', marginTop: 2 },
+  // Memory thumbnails
+  memThumb: { width: 116, height: 116, borderRadius: 16, overflow: 'hidden', position: 'relative', backgroundColor: '#F0EAD8' },
+  memThumbImg: { width: '100%', height: '100%' },
+  thumbCrown: { position: 'absolute', top: 6, left: 8, fontSize: 16 },
 
-  // Squad Memories scrapbook cards
-  memCard: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 20, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.cardBorder },
-  memPhotoWrap: { width: 92, height: 92, borderRadius: 14, overflow: 'visible', position: 'relative' },
-  memPhoto: { width: 92, height: 92, borderRadius: 14 },
-  tape: { position: 'absolute', width: 28, height: 12, backgroundColor: 'rgba(255,235,160,0.85)', borderRadius: 2 },
-  tapeLeft: { top: -4, left: 6, transform: [{ rotate: '-22deg' }] },
-  tapeRight: { top: -4, right: 6, transform: [{ rotate: '20deg' }] },
-  memRatingChip: { position: 'absolute', bottom: -8, right: -6, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 10, borderWidth: 2, borderColor: '#fff' },
-  memRatingText: { fontSize: 12 },
-  memActivity: { fontSize: 14, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  memCaption: { fontSize: 12, color: '#666', marginTop: 4, fontStyle: 'italic', lineHeight: 17 },
-  memMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  memAuthor: { fontSize: 11, color: '#999', flex: 1, marginRight: 8 },
-  memHeart: { fontSize: 18, color: COLORS.coral },
-
-  // Secret badges
-  secretCard: {
-    backgroundColor: '#fff', borderRadius: 22, padding: 20, marginBottom: 8,
-    borderWidth: 1, borderColor: COLORS.cardBorder,
-  },
-  secretEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: COLORS.palmGreen, marginBottom: 4 },
-  secretHeadline: { fontSize: 15, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.1, marginBottom: 14 },
-  secretRow: { flexDirection: 'row', gap: 10 },
-  secretTile: { flex: 1, alignItems: 'center', backgroundColor: '#FAFAF6', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 6, borderWidth: 1, borderColor: COLORS.cardBorder },
-  secretEmojiWrap: { width: 52, height: 52, borderRadius: 14, backgroundColor: '#F0EAD8', alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  secretLock: { position: 'absolute', bottom: -2, right: -2, fontSize: 12 },
-  secretName: { fontSize: 12, fontWeight: '700', color: COLORS.dark, marginTop: 8, letterSpacing: -0.1 },
-  secretHint: { fontSize: 10, color: '#999', marginTop: 2, textAlign: 'center' },
-
-  // Empty memories
   emptyCard: { backgroundColor: '#fff', borderRadius: 20, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: COLORS.cardBorder },
   emptyEmoji: { fontSize: 36, marginBottom: 10 },
   emptyText: { color: '#999', fontSize: 13 },

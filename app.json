@@ -28,7 +28,8 @@
         {
           "photosPermission": "We Limin' needs access to your photos to add memories to the scrapbook."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "scheme": "lime-app"
   }
