@@ -1,0 +1,279 @@
+import React, { useState, useEffect } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import SetupScreen from './src/screens/SetupScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import ActivitiesScreen from './src/screens/ActivitiesScreen';
+import ActivityDetailScreen from './src/screens/ActivityDetailScreen';
+import SquadScreen from './src/screens/SquadScreen';
+import ScrapbookScreen from './src/screens/ScrapbookScreen';
+import AddMemoryScreen from './src/screens/AddMemoryScreen';
+
+import { getProfile, getBadges, upsertProfile, uploadPhoto, supabase } from './src/lib/supabase';
+import { COLORS } from './src/lib/constants';
+import { AppContext } from './src/lib/AppContext';
+import { markFirstOpenToday } from './src/lib/hiddenBadges';
+
+const PROFILE_KEY = 'lime_profile';
+const USER_ID_KEY = 'lime_user_id';
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseConfigured =
+  !!supabaseUrl && !!supabaseKey && !supabaseUrl.includes('your-project');
+
+console.log('[lime] Supabase URL:', supabaseUrl || '(missing)');
+console.log('[lime] Supabase key present:', !!supabaseKey);
+console.log('[lime] Supabase configured:', supabaseConfigured);
+
+const Tab        = createBottomTabNavigator();
+const TabStack   = createNativeStackNavigator();
+const RootStack  = createNativeStackNavigator();
+
+function TabNavigator() {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarStyle: { backgroundColor: '#fff', borderTopColor: 'rgba(0,0,0,0.05)', height: 86, paddingBottom: 22, paddingTop: 10 },
+        tabBarActiveTintColor: COLORS.coral,
+        tabBarInactiveTintColor: '#bbb',
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4, marginTop: 4 },
+        tabBarIcon: ({ focused }) => {
+          // Lime-pin / lime-slice / palm / scrapbook — branded set.
+          const icons = { Home: '🍋', Activities: '🧭', Squad: '🌴', Scrapbook: '📔' };
+          return (
+            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+              {focused && (
+                <View style={{
+                  position: 'absolute', top: -2, width: 36, height: 26, borderRadius: 13,
+                  backgroundColor: 'rgba(232,112,79,0.12)',
+                }} />
+              )}
+              <Text style={{ fontSize: 18, opacity: focused ? 1 : 0.4 }}>{icons[route.name]}</Text>
+            </View>
+          );
+        },
+      })}
+    >
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Activities" component={ActivitiesStack} options={{ tabBarLabel: 'Explore' }} />
+      <Tab.Screen name="Squad" component={SquadScreen} />
+      <Tab.Screen name="Scrapbook" component={ScrapbookStack} />
+    </Tab.Navigator>
+  );
+}
+
+function ActivitiesStack() {
+  return (
+    <TabStack.Navigator screenOptions={{ headerShown: false }}>
+      <TabStack.Screen name="ActivitiesList" component={ActivitiesScreen} />
+      <TabStack.Screen name="ActivityDetail" component={ActivityDetailScreen} />
+    </TabStack.Navigator>
+  );
+}
+
+function ScrapbookStack() {
+  return (
+    <TabStack.Navigator screenOptions={{ headerShown: false }}>
+      <TabStack.Screen name="ScrapbookList" component={ScrapbookScreen} />
+      <TabStack.Screen name="AddMemory" component={AddMemoryScreen} />
+    </TabStack.Navigator>
+  );
+}
+
+// Root stack — wraps the tab navigator and exposes ActivityDetail
+// as a true modal screen. HomeScreen randomizer dives straight here
+// so there's no back-state mismatch with the Activities tab stack.
+function RootNavigator() {
+  return (
+    <RootStack.Navigator screenOptions={{ headerShown: false }}>
+      <RootStack.Screen name="Tabs" component={TabNavigator} />
+      <RootStack.Screen
+        name="ActivityDetailModal"
+        component={ActivityDetailScreen}
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        initialParams={{ isModal: true }}
+      />
+    </RootStack.Navigator>
+  );
+}
+
+export default function App() {
+  const [profile, setProfile] = useState(null);
+  const [myBadges, setMyBadges] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { init(); }, []);
+
+  const init = async () => {
+    // Record first-open time of the day so the Spontaneous hidden
+    // badge can check whether a completion happened within 2h.
+    markFirstOpenToday();
+    try {
+      const id = await AsyncStorage.getItem(USER_ID_KEY);
+      if (!id) { setLoading(false); return; }
+
+      let remote = null;
+      if (supabaseConfigured) {
+        try {
+          remote = await getProfile(id);
+        } catch (e) {
+          console.warn('[lime] getProfile failed, falling back to local cache:', e?.message || e);
+        }
+      }
+
+      if (remote) {
+        setProfile(remote);
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(remote));
+        try {
+          const badges = await getBadges(id);
+          setMyBadges(badges);
+        } catch (e) { console.warn('[lime] getBadges failed:', e?.message || e); }
+      } else {
+        const cached = await AsyncStorage.getItem(PROFILE_KEY);
+        if (cached) setProfile(JSON.parse(cached));
+      }
+    } catch (e) {
+      console.error('[lime] init error:', e);
+    }
+    setLoading(false);
+  };
+
+  const handleSetupComplete = async ({ name, accentColor, photoUri, expression }) => {
+    let id = await AsyncStorage.getItem(USER_ID_KEY);
+    if (!id) {
+      id = `user_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      await AsyncStorage.setItem(USER_ID_KEY, id);
+    }
+
+    let photoUrl = null;
+    if (photoUri && supabaseConfigured) {
+      try {
+        photoUrl = await uploadPhoto(photoUri, id, 'profiles');
+      } catch (e) {
+        console.warn('[lime] profile photo upload failed:', e?.message || e);
+        photoUrl = photoUri;
+      }
+    } else if (photoUri) {
+      photoUrl = photoUri;
+    }
+
+    const localProfile = {
+      id,
+      name,
+      emoji: '🦋',
+      accent_color: accentColor.value,
+      accent_text: accentColor.text,
+      color: accentColor.value,
+      expression,
+      photo_url: photoUrl,
+    };
+
+    if (supabaseConfigured) {
+      try {
+        const p = await upsertProfile(localProfile);
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+        setProfile(p);
+        return;
+      } catch (e) {
+        console.warn('[lime] upsertProfile failed, continuing in local-only mode:', e?.message || e);
+      }
+    }
+
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(localProfile));
+    setProfile(localProfile);
+  };
+
+  const updateProfile = async (updates) => {
+    let nextPhotoUrl = profile.photo_url;
+    if (updates.photoUri !== undefined) {
+      if (updates.photoUri === null) {
+        nextPhotoUrl = null;
+      } else if (updates.photoUri !== profile.photo_url) {
+        nextPhotoUrl = updates.photoUri;
+        if (supabaseConfigured) {
+          try { nextPhotoUrl = await uploadPhoto(updates.photoUri, profile.id, 'profiles'); }
+          catch (e) { console.warn('[lime] profile photo upload failed:', e?.message || e); }
+        }
+      }
+    }
+
+    const next = {
+      ...profile,
+      ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.expression !== undefined ? { expression: updates.expression } : {}),
+      ...(updates.accentColor !== undefined ? {
+        accent_color: updates.accentColor.value,
+        accent_text: updates.accentColor.text,
+        color: updates.accentColor.value,
+      } : {}),
+      photo_url: nextPhotoUrl,
+    };
+
+    if (supabaseConfigured) {
+      try {
+        const saved = await upsertProfile(next);
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(saved));
+        setProfile(saved);
+        return saved;
+      } catch (e) {
+        console.warn('[lime] updateProfile failed, falling back to local:', e?.message || e);
+      }
+    }
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+    setProfile(next);
+    return next;
+  };
+
+  const logout = async () => {
+    try {
+      if (supabaseConfigured) {
+        try { await supabase.auth.signOut(); } catch (e) { /* we don't use auth, no-op */ }
+      }
+      await AsyncStorage.clear();
+    } catch (e) {
+      console.warn('[lime] logout error:', e?.message || e);
+    }
+    setMyBadges([]);
+    setProfile(null);
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaProvider>
+        <View style={styles.loading}>
+          <Text style={{ fontSize: 48, marginBottom: 12 }}>🍋</Text>
+          <ActivityIndicator color={COLORS.coral} />
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <SafeAreaProvider>
+        <SetupScreen onComplete={handleSetupComplete} />
+      </SafeAreaProvider>
+    );
+  }
+
+  return (
+    <AppContext.Provider value={{ profile, myBadges, setMyBadges, updateProfile, logout }}>
+      <SafeAreaProvider>
+        <NavigationContainer>
+          <RootNavigator />
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </AppContext.Provider>
+  );
+}
+
+const styles = StyleSheet.create({
+  loading: { flex: 1, backgroundColor: COLORS.cream, alignItems: 'center', justifyContent: 'center' },
+});
