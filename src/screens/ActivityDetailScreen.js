@@ -413,7 +413,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
                 <Text style={styles.limedBtnText}>limed it ✓</Text>
               </TouchableOpacity>
             ) : ua ? (
-              // STATE B — saved (dream / lime_pick / squad_plan). Capture flow.
+              // STATE B — saved (dream / squad_plan). Capture flow.
               <TouchableOpacity onPress={captureMemory} activeOpacity={0.85} style={styles.captureBtn}>
                 <Text style={styles.captureBtnText}>capture this lime ✨</Text>
               </TouchableOpacity>

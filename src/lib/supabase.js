@@ -143,9 +143,9 @@ export async function deleteUserActivity(id) {
 }
 
 // One row's worth of "the user's relationship to this seed activity":
-// source ('lime_pick' | 'dream' | 'squad_plan'), status ('up_next' |
-// 'planned' | 'lived'), and target_date. Returns null when nothing is
-// saved. NOTE: existing schema uses profile_id, not user_id.
+// source ('dream' | 'squad_plan'), status ('up_next' | 'planned' |
+// 'lived'), and target_date. Returns null when nothing is saved.
+// NOTE: existing schema uses profile_id, not user_id.
 export async function getUserActivity(profileId, activityId) {
   const { data } = await supabase
     .from('user_activities')

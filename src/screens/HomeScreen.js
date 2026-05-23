@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, Image, Animated, Easing,
   StyleSheet, RefreshControl,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useFonts, Caveat_500Medium, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { AppContext } from '../lib/AppContext';
@@ -11,7 +11,7 @@ import ProfileAvatar from '../components/ProfileAvatar';
 import {
   ACTIVITIES, COLORS, TIER, RATINGS, HOME_TAGLINES, TIERS, getTier,
 } from '../lib/constants';
-import { getMemories, getBadges, getAllMembers, supabase, getUserActivity } from '../lib/supabase';
+import { getMemories, getBadges, getAllMembers } from '../lib/supabase';
 import AvailabilityModal, { isMondayToday } from './AvailabilityModal';
 import SettingsModal from './SettingsModal';
 import EditProfileModal from './EditProfileModal';
@@ -48,22 +48,19 @@ const POLAROID_TILT     = [-2,         2,         -1.5,      2,          -2.5];
 // item's `pill` value (see below) since the existing lineup pipeline
 // builds from ACTIVITIES + spinPick rather than from user_activities.
 const LINEUP_FILTERS = [
-  { id: 'all',        label: 'all' },
-  { id: 'up_next',    label: 'up next' },
-  { id: 'dreams',     label: 'dreams' },
-  { id: 'lime_picks', label: 'lime picks' },
+  { id: 'all',     label: 'all' },
+  { id: 'up_next', label: 'up next' },
+  { id: 'dreams',  label: 'dreams' },
 ];
 const LINEUP_EMPTY_COPY = {
-  up_next:    'nothing on deck — go find some limes 🍋',
-  dreams:     "no dreams yet — what would you do if money wasn't a thing? ✨",
-  lime_picks: 'spin the lime to save some picks 🎰',
+  up_next: 'nothing on deck — go find some limes 🍋',
+  dreams:  "no dreams yet — what would you do if money wasn't a thing? ✨",
 };
 
 export default function HomeScreen() {
   // ─── PRESERVED: all hooks, state, effects, AppContext, navigation ───
   const { profile, myBadges, setMyBadges } = useContext(AppContext);
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
 
   // Handwritten font — falls back to system if not yet loaded.
   const [fontsLoaded] = useFonts({ Caveat_500Medium, Caveat_700Bold });
@@ -79,47 +76,6 @@ export default function HomeScreen() {
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const mondayNudge = isMondayToday();
-
-  // "Save for later 🎰" — toast + in-flight flag for the spin-pick save.
-  const [savingPick, setSavingPick] = useState(false);
-  const [toastText, setToastText] = useState(null);
-  const toastY = useRef(new Animated.Value(-80)).current;
-  const flashToast = (text) => {
-    setToastText(text);
-    toastY.setValue(-80);
-    Animated.sequence([
-      Animated.spring(toastY, { toValue: 12, useNativeDriver: true, friction: 6 }),
-      Animated.delay(1700),
-      Animated.timing(toastY, { toValue: -80, duration: 220, useNativeDriver: true }),
-    ]).start(() => setToastText(null));
-  };
-
-  const saveSpinPick = async () => {
-    if (!spinPick || savingPick) return;
-    console.log('[home] saveSpinPick EXPLICIT TAP — activity =', spinPick.name, 'id =', spinPick.id);
-    setSavingPick(true);
-    try {
-      const existing = await getUserActivity(profile.id, spinPick.id).catch(() => null);
-      if (existing) {
-        console.log('[home] saveSpinPick — existing row id', existing.id, '— skipping insert');
-        flashToast('already in your lineup ✨');
-      } else {
-        console.log('[home] saveSpinPick — inserting NEW row, source=lime_pick');
-        const { error } = await supabase.from('user_activities').insert({
-          profile_id: profile.id,
-          activity_id: spinPick.id,
-          source: 'lime_pick',
-          status: 'up_next',
-        });
-        if (error) throw error;
-        flashToast('saved as a lime pick 🎰');
-      }
-    } catch (e) {
-      console.warn('[home] saveSpinPick failed:', e?.message || e);
-      flashToast("couldn't save — try again");
-    }
-    setSavingPick(false);
-  };
 
   const refreshUnread = async () => {
     try { setUnreadCount(await getUnreadInviteCount(profile.id)); }
@@ -191,7 +147,6 @@ export default function HomeScreen() {
         const final = eligible[Math.floor(Math.random() * eligible.length)];
         setPreviewPick(final);
         setSpinPick(final);
-        console.log('[home] spin completed — spinPick set to', final.name, '— NO DB WRITE from this code path');
         spinRotation.stopAnimation(() => spinRotation.setValue(0));
         setSpinning(false);
       }
@@ -254,30 +209,20 @@ export default function HomeScreen() {
 
   // Filter pills above the lineup carousel. Translates the picks' `pill`
   // into the (source, status) signal the user thinks in terms of:
-  //   pill === 'from spin'           → lime_picks
   //   pill === 'up next' | 'next up' → up_next
   //   pill === null                  → dreams
   const [lineupFilter, setLineupFilter] = useState('all');
   const filteredLineup = useMemo(() => {
     switch (lineupFilter) {
-      case 'up_next':    return lineup.filter(p => p.pill === 'up next' || p.pill === 'next up');
-      case 'dreams':     return lineup.filter(p => p.pill == null);
-      case 'lime_picks': return lineup.filter(p => p.pill === 'from spin');
+      case 'up_next': return lineup.filter(p => p.pill === 'up next' || p.pill === 'next up');
+      case 'dreams':  return lineup.filter(p => p.pill == null);
       case 'all':
-      default:           return lineup;
+      default:        return lineup;
     }
   }, [lineup, lineupFilter]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {toastText && (
-        <Animated.View
-          style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastY }] }]}
-          pointerEvents="none"
-        >
-          <Text style={styles.toastText}>{toastText}</Text>
-        </Animated.View>
-      )}
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.dark} />}
@@ -375,23 +320,9 @@ export default function HomeScreen() {
                   <Text style={[styles.spinResultTierText, { color: t.text }]}>{t.label} tier</Text>
                 </View>
                 {spinPick && !spinning && (
-                  <>
-                    <TouchableOpacity onPress={() => openDetail(spinPick)} style={styles.spinResultCta}>
-                      <Text style={styles.spinResultCtaText}>Let's do it →</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={saveSpinPick}
-                      disabled={savingPick}
-                      activeOpacity={0.7}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                      style={styles.saveForLaterWrap}
-                    >
-                      <Text style={[styles.saveForLaterText, HAND_500 && { fontFamily: HAND_500 }, savingPick && { opacity: 0.5 }]}>
-                        save for later 🎰
-                      </Text>
-                      <Underline size={120} color="#E8704F" opacity={0.85} style={{ top: 18, alignSelf: 'center', left: '50%', marginLeft: -60 }} />
-                    </TouchableOpacity>
-                  </>
+                  <TouchableOpacity onPress={() => openDetail(spinPick)} style={styles.spinResultCta}>
+                    <Text style={styles.spinResultCtaText}>Let's do it →</Text>
+                  </TouchableOpacity>
                 )}
               </View>
             );
@@ -655,19 +586,6 @@ const styles = StyleSheet.create({
   spinResultTierText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
   spinResultCta: { backgroundColor: COLORS.coral, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
   spinResultCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-
-  // Save-for-later under the spin "Let's do it →" button
-  saveForLaterWrap: { marginTop: 12, position: 'relative', alignItems: 'center', minHeight: 44, justifyContent: 'center' },
-  saveForLaterText: { color: '#E8704F', fontSize: 16, lineHeight: 20, letterSpacing: -0.2 },
-
-  // Inline toast (shared across save actions) — `top` is applied inline
-  // from useSafeAreaInsets() so it sits below the Dynamic Island.
-  toast: {
-    position: 'absolute', left: 22, right: 22, zIndex: 9999, elevation: 10,
-    backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 },
-  },
-  toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 
   // The Lineup card
   lineupCard: {
