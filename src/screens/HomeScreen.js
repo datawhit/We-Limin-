@@ -153,6 +153,13 @@ export default function HomeScreen() {
 
   const recentMemories = memories.slice(0, 4);
 
+  // Count of memories posted by the current user — drives the
+  // "Memories" stat under the Next Unlock card.
+  const myMemoryCount = useMemo(
+    () => memories.filter(m => m.profile_id === profile.id).length,
+    [memories, profile.id]
+  );
+
   // Leaderboard is computed but no longer rendered in the refreshed
   // layout — kept memoed in case other call sites consume it.
   const leaderboard = useMemo(() => {
@@ -194,25 +201,36 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.dark} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* ─── Greeting + icons ─── */}
+        {/* ─── Greeting + bell ─── */}
+        {/* Avatar + name is one tappable target → Profile screen.
+            Profile route may not be registered yet; React Navigation
+            will warn but the app keeps running. */}
         <View style={styles.topBar}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Hey {profile.name} ✨</Text>
-            <Text style={styles.subline}>{dayName} · {sessionTagline} 🌴</Text>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TouchableOpacity onPress={() => setMessagesOpen(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={styles.iconText}>🔔</Text>
-              {unreadCount > 0 && (
-                <View style={styles.unreadDot}>
-                  <Text style={styles.unreadDotText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={styles.iconText}>⚙️</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            onPress={() => {
+              try { navigation.navigate('Profile'); }
+              catch { console.log('Profile tap'); }
+            }}
+            activeOpacity={0.85}
+            style={styles.identityRow}
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+          >
+            <ProfileAvatar profile={profile} size={36} ringColor={COLORS.coral} ringWidth={2} />
+            <View style={{ marginLeft: 10, flex: 1 }}>
+              <Text style={[styles.greeting, HAND_500 && { fontFamily: HAND_500 }]} numberOfLines={1}>
+                Hey {profile.name} ✨
+              </Text>
+              <Text style={styles.subline}>{dayName} · {sessionTagline} 🌴</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setMessagesOpen(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.iconText}>🔔</Text>
+            {unreadCount > 0 && (
+              <View style={styles.unreadDot}>
+                <Text style={styles.unreadDotText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* ─── Randomizer card ─── */}
@@ -262,10 +280,6 @@ export default function HomeScreen() {
               ? `${VIBES.find(v => v.id === vibe).emoji} ${VIBES.find(v => v.id === vibe).label} pool only`
               : 'All 59 in the pool 🍋'}
           </Text>
-
-          <TouchableOpacity onPress={limeFind} activeOpacity={0.85} style={styles.askLineBtn}>
-            <Text style={styles.askLineText}>✨  or, ask the lime to pick →</Text>
-          </TouchableOpacity>
 
           {(() => {
             const shown = previewPick || spinPick;
@@ -344,20 +358,37 @@ export default function HomeScreen() {
         {/* ─── Next Unlock ─── */}
         {nextTier ? (
           <View style={styles.unlockCard}>
-            <View style={styles.lockedBadge}>
-              <Text style={{ fontSize: 28, opacity: 0.5 }}>{nextTier.emoji}</Text>
-              <View style={styles.lockBadge}><Text style={{ fontSize: 10 }}>🔒</Text></View>
+            <View style={styles.unlockTopRow}>
+              <View style={styles.lockedBadge}>
+                <Text style={{ fontSize: 28, opacity: 0.5 }}>{nextTier.emoji}</Text>
+                <View style={styles.lockBadge}><Text style={{ fontSize: 10 }}>🔒</Text></View>
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={styles.unlockEyebrow}>NEXT UNLOCK</Text>
+                <Text style={styles.unlockName}>{nextTier.name} {nextTier.emoji}</Text>
+                <Text style={styles.unlockSub}>{tier.badgesToNext} more adventures to go</Text>
+              </View>
+              <Text style={styles.unlockPalm}>🌴</Text>
+              <Sparkle size={14} color={COLORS.coral} opacity={0.9} style={{ right: 90, top: -2 }} />
+              <TouchableOpacity onPress={() => setTiersOpen(true)} style={styles.unlockCta}>
+                <Text style={styles.unlockCtaText}>See all tiers</Text>
+              </TouchableOpacity>
             </View>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={styles.unlockEyebrow}>NEXT UNLOCK</Text>
-              <Text style={styles.unlockName}>{nextTier.name} {nextTier.emoji}</Text>
-              <Text style={styles.unlockSub}>{tier.badgesToNext} more adventures to go</Text>
+
+            {/* Inline stats — pulled from user data */}
+            <View style={styles.unlockStatsRow}>
+              <Text style={styles.unlockStat}>
+                <Text style={styles.unlockStatNum}>{myBadges.length}</Text> Adventures
+              </Text>
+              <Text style={styles.unlockStatDot}> · </Text>
+              <Text style={styles.unlockStat}>
+                <Text style={styles.unlockStatNum}>{myMemoryCount}</Text> Memories
+              </Text>
+              <Text style={styles.unlockStatDot}> · </Text>
+              <Text style={styles.unlockStat}>
+                <Text style={styles.unlockStatNum}>{myBadges.length}</Text> Badges
+              </Text>
             </View>
-            <Text style={styles.unlockPalm}>🌴</Text>
-            <Sparkle size={14} color={COLORS.coral} opacity={0.9} style={{ right: 90, top: -2 }} />
-            <TouchableOpacity onPress={() => setTiersOpen(true)} style={styles.unlockCta}>
-              <Text style={styles.unlockCtaText}>See all tiers</Text>
-            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -434,10 +465,11 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.cream },
   scroll: { padding: 22, paddingBottom: 64 },
 
-  // Top bar
+  // Top bar — avatar + name (tappable) on the left, bell on the right
   topBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
-  greeting: { fontSize: 30, fontWeight: '500', color: COLORS.dark, letterSpacing: -0.8 },
-  subline: { fontSize: 13, color: '#888', marginTop: 4 },
+  identityRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  greeting: { fontSize: 28, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 34 },
+  subline: { fontSize: 13, color: '#888', marginTop: 2 },
   iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.cardBorder, position: 'relative' },
   iconText: { fontSize: 18 },
   unreadDot: {
@@ -482,9 +514,6 @@ const styles = StyleSheet.create({
 
   spinPool: { marginTop: 10, fontSize: 13, color: '#6B6B6B' },
 
-  askLineBtn: { marginTop: 14, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.6)' },
-  askLineText: { fontSize: 13, fontWeight: '700', color: COLORS.deepCoral, letterSpacing: 0.2, textAlign: 'center' },
-
   spinResult: {
     marginTop: 16, alignSelf: 'stretch',
     backgroundColor: '#fff', borderRadius: 20, padding: 18, alignItems: 'center',
@@ -522,13 +551,24 @@ const styles = StyleSheet.create({
   addDreamText: { fontSize: 13, color: '#666', fontWeight: '600' },
 
   // Next Unlock — light coral-bordered card
+  // Outer is a column so we can stack the existing horizontal row
+  // on top of the new inline stats row.
   unlockCard: {
-    flexDirection: 'row', alignItems: 'center',
     backgroundColor: COLORS.cream, borderRadius: 24, padding: 16, marginBottom: 22,
     borderWidth: 1, borderColor: COLORS.cardBorder,
     borderLeftWidth: 4, borderLeftColor: COLORS.coral,
     position: 'relative', overflow: 'hidden',
   },
+  unlockTopRow: { flexDirection: 'row', alignItems: 'center' },
+
+  unlockStatsRow: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'baseline',
+    marginTop: 14, paddingTop: 12,
+    borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.06)',
+  },
+  unlockStat: { fontSize: 11, color: '#888' },
+  unlockStatNum: { fontSize: 11, fontWeight: '700', color: COLORS.dark },
+  unlockStatDot: { fontSize: 11, color: '#ccc' },
   lockedBadge: {
     width: 54, height: 54, borderRadius: 14, backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
