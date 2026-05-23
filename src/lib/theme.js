@@ -9,23 +9,23 @@ import { COLORS } from './constants';
 // Used for emoji squares inside polaroids and other soft tinted
 // surfaces. Names match the washi color tokens below.
 export const PASTELS = {
-  mintBg:     '#DDF1E2',
-  blueBg:     '#D6F0F4',
-  amberBg:    '#FDEED7',
-  pinkBg:     '#FCDCD0',
-  lavenderBg: '#E4DEF6',
-  coralBg:    '#FDE3DA',
+  mintBg:     '#B8E6D0',
+  blueBg:     '#B8DDF0',
+  amberBg:    '#F9E0A8',
+  pinkBg:     '#F5C6D5',
+  lavenderBg: '#D9CFF5',
+  coralBg:    '#F8C9B8',
 };
 
 // ─── Washi tape stripe colors ─────────────────────────────
 // Slightly more saturated than the pastels — they read as paper
 // tape on a cream page.
 export const TAPE_COLORS = {
-  pink:     '#F4C3D2',
-  blue:     '#B6D4E8',
-  coral:    '#F2C8A0',
-  lavender: '#D7CFEC',
-  amber:    '#F6D78D',
+  pink:     '#F4A8C0',
+  blue:     '#9EC8E8',
+  coral:    '#F2A88C',
+  lavender: '#C4B5F0',
+  amber:    '#F2D068',
 };
 
 // Optional pairing: when a Polaroid is told to use a washi color,

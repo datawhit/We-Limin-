@@ -85,7 +85,13 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingHorizontal: 10,
     paddingBottom: 14,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 2,
+    // Subtle lift off the cream page. Applied to the outer card only;
+    // WashiTape is decorative and stays flat (no shadow).
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
     position: 'relative',
     minHeight: 184,
   },
