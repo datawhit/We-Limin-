@@ -173,6 +173,13 @@ export default function ProfileScreen({ navigation }) {
           onPress={goAdventures}
         />
         <NavRow
+          emoji="📅"
+          emojiBg={PASTELS.mintBg}
+          title="update my week"
+          subtitle="set when you're free to lime"
+          onPress={() => setAvailOpen(true)}
+        />
+        <NavRow
           emoji="⚙️"
           emojiBg={PASTELS.lavenderBg}
           title="settings"

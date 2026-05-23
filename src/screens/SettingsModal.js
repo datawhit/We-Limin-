@@ -3,24 +3,28 @@ import {
   Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Switch, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppContext } from '../lib/AppContext';
-import ProfileAvatar from '../components/ProfileAvatar';
 import { COLORS } from '../lib/constants';
-import EditProfileModal from './EditProfileModal';
+import { PASTELS, HANDWRITTEN_500 } from '../lib/theme';
+import { Star, Sparkle, CurvedArrow } from '../components/Doodles';
 
 const NOTIF_KEY = 'lime_notification_prefs';
 const DEFAULT_PREFS = { push: true, memoryReactions: true, weeklyReminder: true };
 
 export default function SettingsModal({ visible, onClose, onOpenAvailability }) {
+  // ─── PRESERVED: hooks, state, logout handler, notif prefs ───
   const { profile, logout } = useContext(AppContext);
   const accent = profile?.accent_color || COLORS.coral;
+  const insets = useSafeAreaInsets();
 
-  const [editOpen, setEditOpen] = useState(false);
-  const [editFocus, setEditFocus] = useState('profile');
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const [notifOpen, setNotifOpen] = useState(false);
+
+  const [fontsLoaded] = useFonts({ Caveat_500Medium });
+  const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
 
   useEffect(() => {
     if (!visible) return;
@@ -35,11 +39,9 @@ export default function SettingsModal({ visible, onClose, onOpenAvailability }) 
     try { await AsyncStorage.setItem(NOTIF_KEY, JSON.stringify(next)); } catch {}
   };
 
-  const openEdit = (focus) => {
-    setEditFocus(focus);
-    setEditOpen(true);
-  };
-
+  // Preserved: Alert confirm → supabase.auth.signOut() (inside logout) →
+  // AsyncStorage.clear() (inside logout) → AppContext reset (setProfile(null))
+  // → app shell renders SetupScreen.
   const handleLogout = () => {
     Alert.alert(
       'Log out?',
@@ -54,123 +56,137 @@ export default function SettingsModal({ visible, onClose, onOpenAvailability }) 
     );
   };
 
+  const comingSoon = (label) => () => Alert.alert(label, `${label} coming soon 🍋`);
+
   if (!profile) return null;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.close}>Close</Text>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        {/* ─── Header — pinned outside ScrollView, safe-area-padded ─── */}
+        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
+          <TouchableOpacity
+            onPress={onClose}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.headerBtn}
+          >
+            <Text style={styles.chev}>‹</Text>
           </TouchableOpacity>
-          <Text style={styles.topTitle}>Settings</Text>
-          <View style={{ width: 50 }} />
+          <Text style={[styles.topTitle, HAND_500 && { fontFamily: HAND_500 }]}>settings</Text>
+          <View style={styles.headerBtn} />
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 22, paddingBottom: 60 }}>
-          {/* Identity card */}
-          <View style={styles.idCard}>
-            <ProfileAvatar profile={profile} size={64} ringColor={accent} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.idName}>{profile.name}</Text>
-              <Text style={styles.idSub}>{profile.expression ? labelFor(profile.expression) : 'Profile'}</Text>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          {/* Scattered decorative accents (low opacity, non-blocking) */}
+          <View pointerEvents="none" style={styles.scatterTop}>
+            <Sparkle size={14} color={COLORS.coral}     opacity={0.5}  style={{ left: 8, top: 0 }} />
+            <Star    size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ right: 12, top: 4 }} />
+          </View>
+
+          {/* ─── APP ─── */}
+          <Text style={styles.groupLabel}>app</Text>
+
+          <SettingsRow
+            emoji="🎨"
+            emojiBg={PASTELS.lavenderBg}
+            title="theme"
+            subtitle="customize your vibe"
+            trailingPill="coming soon"
+            onPress={comingSoon('Theme presets')}
+          />
+          <SettingsRow
+            emoji="🔔"
+            emojiBg={PASTELS.amberBg}
+            title="notifications"
+            subtitle="push, reactions, reminders"
+            onPress={() => setNotifOpen(o => !o)}
+          />
+          {notifOpen && (
+            <View style={styles.notifBlock}>
+              <NotifToggle
+                label="Push notifications"
+                sub="Get pinged when squad stuff happens"
+                value={prefs.push}
+                onChange={() => togglePref('push')}
+                accent={accent}
+              />
+              <Divider />
+              <NotifToggle
+                label="Memory reactions"
+                sub="When someone comments on your post"
+                value={prefs.memoryReactions}
+                onChange={() => togglePref('memoryReactions')}
+                accent={accent}
+              />
+              <Divider />
+              <NotifToggle
+                label="Weekly availability reminder"
+                sub="Monday morning nudge"
+                value={prefs.weeklyReminder}
+                onChange={() => togglePref('weeklyReminder')}
+                accent={accent}
+              />
             </View>
-          </View>
+          )}
+          <SettingsRow
+            emoji="🔒"
+            emojiBg={PASTELS.mintBg}
+            title="privacy"
+            subtitle="who can see your stuff"
+            trailingPill="coming soon"
+            onPress={comingSoon('Privacy controls')}
+          />
 
-          {/* Profile group */}
-          <Text style={styles.groupLabel}>Profile</Text>
-          <View style={styles.group}>
-            <SettingsRow
-              icon="👤"
-              title="Edit profile"
-              sub="Name, photo, expression, color"
-              onPress={() => openEdit('profile')}
-            />
-            <Divider />
-            <SettingsRow
-              icon="🎨"
-              title="Edit avatar"
-              sub="Skin, hair, fit, extras"
-              onPress={() => openEdit('avatar')}
-            />
-            <Divider />
-            <SettingsRow
-              icon="📅"
-              title="Update my week"
-              sub="Tap free slots so the squad can plan"
-              onPress={() => onOpenAvailability?.()}
-            />
-          </View>
+          {/* ─── ABOUT ─── */}
+          <Text style={[styles.groupLabel, { marginTop: 18 }]}>about</Text>
+          <SettingsRow
+            emoji="🍋"
+            emojiBg={PASTELS.coralBg}
+            title="about"
+            subtitle="we limin' v1.0"
+            onPress={() => Alert.alert("We Limin'", "v1.0\nLimin' season — summer 2026 🍋")}
+          />
 
-          {/* Notifications */}
-          <Text style={styles.groupLabel}>Notifications</Text>
-          <View style={styles.group}>
-            <SettingsRow
-              icon="🔔"
-              title="Notification preferences"
-              sub={notifOpen ? 'Tap to collapse' : 'Push, reactions, reminders'}
-              onPress={() => setNotifOpen(o => !o)}
-              trailing={<Text style={styles.chevron}>{notifOpen ? '▲' : '▼'}</Text>}
-            />
-            {notifOpen && (
-              <View style={styles.notifBlock}>
-                <NotifToggle
-                  label="Push notifications"
-                  sub="Get pinged when squad stuff happens"
-                  value={prefs.push}
-                  onChange={() => togglePref('push')}
-                  accent={accent}
-                />
-                <Divider />
-                <NotifToggle
-                  label="Memory reactions"
-                  sub="When someone comments on your post"
-                  value={prefs.memoryReactions}
-                  onChange={() => togglePref('memoryReactions')}
-                  accent={accent}
-                />
-                <Divider />
-                <NotifToggle
-                  label="Weekly availability reminder"
-                  sub="Monday morning nudge"
-                  value={prefs.weeklyReminder}
-                  onChange={() => togglePref('weeklyReminder')}
-                  accent={accent}
-                />
-              </View>
-            )}
-          </View>
+          {/* ─── ACCOUNT ─── */}
+          <Text style={[styles.groupLabel, { marginTop: 18 }]}>account</Text>
+          <TouchableOpacity onPress={handleLogout} style={styles.destructiveBtn}>
+            <Text style={[styles.destructiveText, { color: '#E24B4A' }]}>log out</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={comingSoon('Account deletion — contact support to delete your account.')}
+            style={[styles.destructiveBtn, { marginTop: 10 }]}
+          >
+            <Text style={[styles.destructiveText, { color: '#A6353F' }]}>delete account</Text>
+          </TouchableOpacity>
 
-          {/* Account */}
-          <Text style={styles.groupLabel}>Account</Text>
-          <View style={styles.group}>
-            <TouchableOpacity onPress={handleLogout} style={styles.logoutRow}>
-              <Text style={styles.logoutText}>Log out</Text>
-            </TouchableOpacity>
+          {/* Bottom-of-page decorative accents */}
+          <View pointerEvents="none" style={styles.scatterBottom}>
+            <CurvedArrow size={36} color={COLORS.coral}     opacity={0.4}  style={{ left: 24, top: 8, transform: [{ rotate: '110deg' }] }} />
+            <Sparkle    size={12} color={COLORS.amber}     opacity={0.55} style={{ right: 30, top: 22 }} />
+            <Star       size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ left: '50%', top: 40 }} />
           </View>
-
-          <Text style={styles.versionText}>We Limin' · v1.0</Text>
         </ScrollView>
-
-        <EditProfileModal
-          visible={editOpen}
-          onClose={() => setEditOpen(false)}
-          initialFocus={editFocus}
-        />
       </SafeAreaView>
     </Modal>
   );
 }
 
-function SettingsRow({ icon, title, sub, onPress, trailing }) {
+// ─── Settings row (uniform card) ──────────────────────────
+function SettingsRow({ emoji, emojiBg, title, subtitle, trailingPill, onPress }) {
   return (
-    <TouchableOpacity onPress={onPress} style={styles.row}>
-      <View style={styles.rowIcon}><Text style={{ fontSize: 18 }}>{icon}</Text></View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.rowTitle}>{title}</Text>
-        <Text style={styles.rowSub}>{sub}</Text>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.row}>
+      <View style={[styles.rowIcon, { backgroundColor: emojiBg || PASTELS.amberBg }]}>
+        <Text style={{ fontSize: 20 }}>{emoji}</Text>
       </View>
-      {trailing ?? <Text style={styles.chevron}>›</Text>}
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={styles.rowTitle}>{title}</Text>
+        <Text style={styles.rowSub}>{subtitle}</Text>
+      </View>
+      {trailingPill ? (
+        <View style={styles.comingPill}><Text style={styles.comingPillText}>{trailingPill}</Text></View>
+      ) : (
+        <Text style={styles.chevR}>›</Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -194,40 +210,61 @@ function NotifToggle({ label, sub, value, onChange, accent }) {
 
 function Divider() { return <View style={styles.divider} />; }
 
-function labelFor(expression) {
-  if (expression === 'feminine')  return 'Feminine';
-  if (expression === 'masculine') return 'Masculine';
-  return 'Non-binary';
-}
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 22, paddingBottom: 10 },
-  topTitle: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  close: { fontSize: 14, color: '#888', fontWeight: '600' },
+  safe: { flex: 1, backgroundColor: COLORS.cream },
 
-  idCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#fff', borderRadius: 20, padding: 16, marginBottom: 28, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  idName: { fontSize: 18, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.3 },
-  idSub: { fontSize: 12, color: '#999', marginTop: 4 },
+  // Header
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chev: { fontSize: 28, color: COLORS.dark, fontWeight: '500', lineHeight: 28 },
+  topTitle: { fontSize: 28, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 34 },
 
-  groupLabel: { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 },
-  group: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', overflow: 'hidden', marginBottom: 28 },
+  // Scroll
+  scroll: { padding: 22, paddingBottom: 60, position: 'relative' },
+  scatterTop: { height: 24, position: 'relative' },
+  scatterBottom: { height: 70, marginTop: 18, position: 'relative' },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
-  rowIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#f5f0e8', alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { fontSize: 15, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  rowSub: { fontSize: 12, color: '#999', marginTop: 3 },
-  chevron: { color: '#bbb', fontSize: 18 },
+  // Group label
+  groupLabel: { fontSize: 11, fontWeight: '500', color: '#888', letterSpacing: 2, marginBottom: 10, textTransform: 'lowercase' },
 
-  divider: { height: 1, backgroundColor: 'rgba(0,0,0,0.05)', marginLeft: 66 },
+  // Per-row card
+  row: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    padding: 12,
+    marginBottom: 10,
+  },
+  rowIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.2, textTransform: 'lowercase' },
+  rowSub: { fontSize: 12, color: '#888', marginTop: 3 },
+  chevR: { color: '#bbb', fontSize: 22 },
 
-  notifBlock: { borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)', backgroundColor: '#faf7f0' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 14 },
+  // "coming soon" pill on the right of a row
+  comingPill: { backgroundColor: '#F0EAD8', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999 },
+  comingPillText: { fontSize: 11, fontWeight: '600', color: '#888' },
+
+  // Inline notif preferences block, appears under the notifications row
+  notifBlock: {
+    backgroundColor: '#FAF6EB',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    paddingVertical: 4,
+    marginTop: -4, marginBottom: 10,
+  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 14, paddingVertical: 12 },
   toggleLabel: { fontSize: 14, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.1 },
   toggleSub: { fontSize: 11, color: '#999', marginTop: 3 },
+  divider: { height: 1, backgroundColor: 'rgba(0,0,0,0.06)', marginHorizontal: 14 },
 
-  logoutRow: { padding: 16, alignItems: 'center' },
-  logoutText: { fontSize: 15, fontWeight: '700', color: '#d4475c', letterSpacing: 0.2 },
-
-  versionText: { textAlign: 'center', color: '#bbb', fontSize: 11, marginTop: 12 },
+  // Destructive (log out, delete account)
+  destructiveBtn: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    paddingVertical: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  destructiveText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.2, textTransform: 'lowercase' },
 });
