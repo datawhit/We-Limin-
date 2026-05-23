@@ -26,6 +26,7 @@ export const TAPE_COLORS = {
   coral:    '#F2A88C',
   lavender: '#C4B5F0',
   amber:    '#F2D068',
+  mint:     '#A8D5BE',
 };
 
 // Optional pairing: when a Polaroid is told to use a washi color,

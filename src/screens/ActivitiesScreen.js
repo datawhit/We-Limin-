@@ -22,11 +22,17 @@ const CUSTOM_KEY = 'lime_custom_activities';
 const SAVED_KEY  = 'lime_saved_activities';
 
 const TIER_OPTIONS = [
-  { id: 'chill', label: 'Chill', sub: 'low-key & easy' },
-  { id: 'bold',  label: 'Bold',  sub: 'step it up'    },
-  { id: 'wild',  label: 'Wild',  sub: 'big swing'     },
+  { id: 'chill', emoji: '🌿', label: 'Chill', sub: 'low-key & easy' },
+  { id: 'bold',  emoji: '🔥', label: 'Bold',  sub: 'step it up'    },
+  { id: 'wild',  emoji: '😈', label: 'Wild',  sub: 'big swing'     },
 ];
 const EMOJI_PRESETS = ['🎉','🍹','🌴','🌊','🎨','🍿','🏝️','🧘','🎶','🛼','⛵','🌅','🎪','🥥','🧗','🎤'];
+
+// Washi color cycle for field labels in the activity editor.
+// One color per label in render order: name, emoji, tier, location,
+// notes, cost, tags — slight rotation alternated for the torn-tape feel.
+const FIELD_WASHI = ['coral', 'blue', 'amber', 'lavender', 'pink', 'mint', 'coral'];
+const FIELD_ROT   = [-3, 2, -2, 3, -3, 2, -2];
 
 // Tier-tinted pastels for the emoji square on each activity row.
 const TIER_BG = {
@@ -469,57 +475,155 @@ function ActivityEditorModal({ visible, initial, onClose, onSave, accent, accent
     });
   };
 
+  const canSubmit = !!name.trim();
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={editorStyles.safe} edges={['bottom']}>
-        <EditorHeader title={isEdit ? 'Edit activity' : 'New activity'} onClose={onClose} />
+        <EditorHeader title={isEdit ? 'edit activity' : 'new activity'} onClose={onClose} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={{ padding: 22, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-            <Text style={editorStyles.label}>Name</Text>
-            <TextInput value={name} onChangeText={setName} placeholder="What is it?" placeholderTextColor="#bbb" style={editorStyles.input} autoFocus />
+          <ScrollView contentContainerStyle={editorStyles.scroll} keyboardShouldPersistTaps="handled">
+            {/* Page-edge doodles (low opacity, non-blocking) */}
+            <Sparkle    size={14} color={COLORS.coral}     opacity={0.5} style={{ right: 4,  top: 4 }} />
+            <Star       size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: -4, top: 36 }} />
 
-            <Text style={editorStyles.label}>Emoji</Text>
+            {/* Intro pill — only on "new" mode */}
+            {!isEdit && (
+              <View style={editorStyles.introPillRow}>
+                <View style={editorStyles.introPill}>
+                  <Text style={[editorStyles.introPillText, { fontFamily: HANDWRITTEN_500 }]}>what's the plan? ✨</Text>
+                </View>
+              </View>
+            )}
+
+            <LabelWithTape index={0} label="name" />
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="what is it?"
+              placeholderTextColor="#bbb"
+              style={editorStyles.input}
+              autoFocus
+            />
+
+            <LabelWithTape index={1} label="emoji" />
             <View style={editorStyles.emojiGrid}>
-              {EMOJI_PRESETS.map(e => (
-                <TouchableOpacity key={e} onPress={() => setEmoji(e)}
-                  style={[editorStyles.emojiCell, emoji === e && { borderColor: accent, borderWidth: 2, backgroundColor: '#fff' }]}>
-                  <Text style={{ fontSize: 22 }}>{e}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={editorStyles.label}>Tier</Text>
-            <View style={editorStyles.tierRow}>
-              {TIER_OPTIONS.map(t => {
-                const on = tier === t.id;
-                const c = TIER[t.id];
+              {EMOJI_PRESETS.map(e => {
+                const on = emoji === e;
                 return (
-                  <TouchableOpacity key={t.id} onPress={() => setTier(t.id)}
-                    style={[editorStyles.tierCard, on && { borderColor: c.text, borderWidth: 2, backgroundColor: c.bg }]}>
-                    <Text style={[editorStyles.tierLabel, on && { color: c.text }]}>{t.label}</Text>
-                    <Text style={editorStyles.tierSub}>{t.sub}</Text>
+                  <TouchableOpacity
+                    key={e}
+                    onPress={() => setEmoji(e)}
+                    style={[editorStyles.emojiCell, on && editorStyles.emojiCellOn]}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ fontSize: 22 }}>{e}</Text>
+                    {on && (
+                      <Sparkle size={10} color={COLORS.amber} opacity={1} style={{ top: 4, right: 4 }} />
+                    )}
                   </TouchableOpacity>
                 );
               })}
             </View>
 
-            <Text style={editorStyles.label}>Location</Text>
-            <TextInput value={location} onChangeText={setLocation} placeholder="Where? (optional)" placeholderTextColor="#bbb" style={editorStyles.input} />
+            <LabelWithTape index={2} label="tier" />
+            <View style={editorStyles.tierRow}>
+              {TIER_OPTIONS.map(t => {
+                const on = tier === t.id;
+                const bg = on ? (TIER_BG[t.id] || '#fff') : '#fff';
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    onPress={() => setTier(t.id)}
+                    activeOpacity={0.85}
+                    style={[editorStyles.tierCard, { backgroundColor: bg }, on && editorStyles.tierCardOn]}
+                  >
+                    <Text style={editorStyles.tierEmoji}>{t.emoji}</Text>
+                    <Text style={editorStyles.tierLabel}>{t.label.toLowerCase()}</Text>
+                    <Text style={editorStyles.tierSub}>{t.sub}</Text>
+                    {on && (
+                      <Sparkle size={10} color={COLORS.amber} opacity={1} style={{ top: 6, right: 6 }} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-            <Text style={editorStyles.label}>Notes</Text>
-            <TextInput value={notes} onChangeText={setNotes} placeholder="Details, links, anything (optional)" placeholderTextColor="#bbb" style={[editorStyles.input, { minHeight: 80, textAlignVertical: 'top' }]} multiline />
+            <LabelWithTape index={3} label="location" />
+            <TextInput
+              value={location}
+              onChangeText={setLocation}
+              placeholder="where? (optional)"
+              placeholderTextColor="#bbb"
+              style={editorStyles.input}
+            />
 
-            <Text style={editorStyles.label}>Cost estimate</Text>
-            <TextInput value={cost} onChangeText={setCost} placeholder="e.g. $30 / person (optional)" placeholderTextColor="#bbb" style={editorStyles.input} />
+            <LabelWithTape index={4} label="notes" />
+            <TextInput
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="details, links, anything (optional)"
+              placeholderTextColor="#bbb"
+              style={[editorStyles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+              multiline
+            />
 
-            <Text style={editorStyles.label}>Tags</Text>
-            <TextInput value={tags} onChangeText={setTags} placeholder="comma-separated (optional)" placeholderTextColor="#bbb" style={editorStyles.input} autoCapitalize="none" />
+            <LabelWithTape index={5} label="cost estimate" />
+            <TextInput
+              value={cost}
+              onChangeText={setCost}
+              placeholder="e.g. $30 / person (optional)"
+              placeholderTextColor="#bbb"
+              style={editorStyles.input}
+            />
 
-            <TouchableOpacity onPress={save}
-              style={[editorStyles.save, { backgroundColor: name.trim() ? accent : '#e9e3d6' }]}
-              disabled={!name.trim()}>
-              <Text style={[editorStyles.saveText, { color: name.trim() ? accentText : '#aaa' }]}>{isEdit ? 'Save changes' : 'Add to list'}</Text>
-            </TouchableOpacity>
+            <LabelWithTape index={6} label="tags" />
+            <TextInput
+              value={tags}
+              onChangeText={setTags}
+              placeholder="comma-separated (optional)"
+              placeholderTextColor="#bbb"
+              style={editorStyles.input}
+              autoCapitalize="none"
+            />
+
+            {/* Save hero — coral, slight tilt, curved arrow doodle */}
+            <View style={editorStyles.saveWrap}>
+              {/* Optional washi over the button */}
+              <WashiTape
+                color="coral"
+                width={70}
+                height={14}
+                rotation={-3}
+                opacity={0.7}
+                style={{ top: -6, left: '50%', marginLeft: -35 }}
+              />
+              <TouchableOpacity
+                onPress={save}
+                disabled={!canSubmit}
+                activeOpacity={0.85}
+                style={[
+                  editorStyles.saveHero,
+                  !canSubmit && { backgroundColor: '#E5BCAB' },
+                ]}
+              >
+                <Text style={editorStyles.saveHeroText}>
+                  {isEdit ? 'save changes' : 'add to the lineup'} ✨
+                </Text>
+              </TouchableOpacity>
+              <CurvedArrow
+                size={54}
+                color={COLORS.coral}
+                opacity={0.55}
+                style={{ right: -4, bottom: -4, transform: [{ rotate: '24deg' }] }}
+              />
+            </View>
+
+            {/* Bottom-of-form decorative scatter */}
+            <View pointerEvents="none" style={editorStyles.bottomAccents}>
+              <Sparkle size={12} color={COLORS.amber}     opacity={0.55} style={{ left: 30,  top: 0 }} />
+              <Star    size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ right: 30, top: 12 }} />
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -527,16 +631,31 @@ function ActivityEditorModal({ visible, initial, onClose, onSave, accent, accent
   );
 }
 
+// Inline component — field label resting on a torn-tape strip.
+function LabelWithTape({ index, label }) {
+  const washi = FIELD_WASHI[index % FIELD_WASHI.length];
+  const rot   = FIELD_ROT[index % FIELD_ROT.length];
+  return (
+    <View style={editorStyles.labelWrap}>
+      <WashiTape color={washi} width={120} height={22} rotation={rot} opacity={0.65} style={{ top: -2, left: -6 }} />
+      <Text style={editorStyles.label}>{label}</Text>
+    </View>
+  );
+}
+
 function EditorHeader({ title, onClose }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[editorStyles.header, { paddingTop: insets.top + 12 }]}>
-      <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={editorStyles.headerBtn}>
+      <TouchableOpacity
+        onPress={onClose}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        style={editorStyles.headerBtn}
+      >
         <Text style={editorStyles.chev}>‹</Text>
-        <Text style={editorStyles.cancel}>Cancel</Text>
       </TouchableOpacity>
-      <Text style={editorStyles.title}>{title}</Text>
-      <View style={{ width: 60 }} />
+      <Text style={[editorStyles.title, { fontFamily: HANDWRITTEN_500 }]}>{title}</Text>
+      <View style={editorStyles.headerBtn} />
     </View>
   );
 }
@@ -654,23 +773,86 @@ const menuStyles = StyleSheet.create({
 
 const editorStyles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.cream },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
-  title: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  headerBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 60, minHeight: 44, gap: 2 },
-  chev: { fontSize: 22, color: '#888', fontWeight: '500', lineHeight: 22 },
-  cancel: { fontSize: 14, color: '#888', fontWeight: '600' },
 
-  label: { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 18 },
-  input: { backgroundColor: '#fff', padding: 14, borderRadius: 14, fontSize: 15, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', color: COLORS.dark },
+  // Header
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+  title: { fontSize: 26, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 32 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chev: { fontSize: 28, color: COLORS.dark, fontWeight: '500', lineHeight: 28 },
 
+  // Scroll container — relative so doodles can be positioned inside
+  scroll: { padding: 22, paddingBottom: 60, position: 'relative' },
+
+  // Intro pill — "what's the plan? ✨"
+  introPillRow: { alignItems: 'flex-start', marginBottom: 8 },
+  introPill: {
+    backgroundColor: '#F9E0A8',
+    paddingVertical: 6, paddingHorizontal: 14,
+    borderRadius: 999,
+    transform: [{ rotate: '-2deg' }],
+  },
+  introPillText: { fontSize: 18, color: COLORS.dark, lineHeight: 22 },
+
+  // Field label wrapped over washi tape
+  labelWrap: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8, paddingVertical: 4,
+    marginTop: 18, marginBottom: 8,
+    position: 'relative',
+  },
+  label: {
+    fontSize: 11, fontWeight: '500', color: '#888',
+    letterSpacing: 1.5, textTransform: 'lowercase',
+  },
+
+  // Inputs
+  input: {
+    backgroundColor: '#fff', padding: 14, borderRadius: 14,
+    fontSize: 15, borderWidth: 1, borderColor: '#EBE2D0', color: COLORS.dark,
+  },
+
+  // Emoji picker — 4-col grid
   emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  emojiCell: { width: 50, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1ebde', borderWidth: 1.5, borderColor: 'transparent' },
+  emojiCell: {
+    width: 48, height: 48, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.cream,
+    borderWidth: 1.5, borderColor: 'transparent',
+    position: 'relative',
+  },
+  emojiCellOn: {
+    borderColor: COLORS.coral, borderWidth: 2,
+    backgroundColor: '#FBE5C8',
+  },
 
+  // Tier picker — 3 pills with emoji on top
   tierRow: { flexDirection: 'row', gap: 8 },
-  tierCard: { flex: 1, backgroundColor: '#fff', padding: 14, borderRadius: 14, alignItems: 'center', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.05)' },
-  tierLabel: { fontSize: 13, fontWeight: '700', color: '#666' },
-  tierSub: { fontSize: 10, color: '#aaa', marginTop: 3 },
+  tierCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    paddingVertical: 14, paddingHorizontal: 8,
+    borderRadius: 14,
+    alignItems: 'center',
+    borderWidth: 1, borderColor: '#EBE2D0',
+    position: 'relative',
+  },
+  tierCardOn: { borderColor: COLORS.coral, borderWidth: 2 },
+  tierEmoji: { fontSize: 22, marginBottom: 4 },
+  tierLabel: { fontSize: 14, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.1 },
+  tierSub: { fontSize: 11, color: '#888', marginTop: 3, textAlign: 'center' },
 
-  save: { marginTop: 28, padding: 16, borderRadius: 14, alignItems: 'center' },
-  saveText: { fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
+  // Save hero
+  saveWrap: { marginTop: 36, alignItems: 'center', position: 'relative' },
+  saveHero: {
+    width: '100%',
+    backgroundColor: '#E8704F',
+    height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    transform: [{ rotate: '-2deg' }],
+    shadowColor: '#000', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 4,
+  },
+  saveHeroText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+
+  // Bottom decorative accents
+  bottomAccents: { height: 50, marginTop: 14, position: 'relative' },
 });
