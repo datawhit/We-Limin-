@@ -28,6 +28,7 @@ export default function Polaroid({
   emojiBg,
   tiltDeg,
   pill,
+  pillVariant = 'subtle', // 'subtle' (default soft amber) | 'badge' (bright #F2C84B)
   completed = false,
   onPress,
   style,
@@ -80,7 +81,7 @@ export default function Polaroid({
       ) : null}
 
       {pill && !fromSpin && (
-        <View style={styles.pill}>
+        <View style={[styles.pill, pillVariant === 'badge' && styles.pillBadge]}>
           <Text style={styles.pillText}>{pill}</Text>
         </View>
       )}
@@ -112,8 +113,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 14, fontWeight: '700', color: COLORS.dark, marginBottom: 2, letterSpacing: -0.2 },
   subtitle: { fontSize: 11, color: '#888' },
   subtitleFromSpin: { color: COLORS.deepCoral, fontWeight: '600' },
-  pill: { alignSelf: 'flex-start', marginTop: 10, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FCEDC9' },
+  pill: { alignSelf: 'flex-start', marginTop: 10, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, backgroundColor: '#FCEDC9' },
   pillText: { fontSize: 11, fontWeight: '700', color: COLORS.deepAmber },
+  pillBadge: { backgroundColor: '#F2C84B' },
   completedPip: {
     position: 'absolute', top: 8, right: 8,
     width: 22, height: 22, borderRadius: 11,
