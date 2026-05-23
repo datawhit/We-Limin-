@@ -240,6 +240,23 @@ export async function setInviteStatus(inviteId, status) {
   await supabase.from('invites').update({ status }).eq('id', inviteId);
 }
 
+// All accepted invites the current user is part of (either sender or
+// receiver), with both sides' profiles joined. SquadScreen groups
+// these client-side by activity_id to build "upcoming together".
+export async function getAcceptedInvites(profileId) {
+  const { data } = await supabase
+    .from('invites')
+    .select(`
+      *,
+      from_profile:profiles!invites_from_user_id_fkey(id, name, photo_url, accent_color, avatar, emoji),
+      to_profile:profiles!invites_to_user_id_fkey(id, name, photo_url, accent_color, avatar, emoji)
+    `)
+    .eq('status', 'accepted')
+    .or(`from_user_id.eq.${profileId},to_user_id.eq.${profileId}`)
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
 // ── PHOTO UPLOAD ──────────────────────────────────────────
 export async function uploadPhoto(uri, profileId, folder = 'memories') {
   const ext = uri.split('.').pop() || 'jpg';

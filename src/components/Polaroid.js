@@ -14,13 +14,14 @@
 //   />
 
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { COLORS } from '../lib/constants';
 import { WASHI_TO_EMOJI_BG } from '../lib/theme';
 import WashiTape from './WashiTape';
 
 export default function Polaroid({
   emoji,
+  photoUri,   // optional — when set, replaces the emoji square with an Image
   title,
   subtitle,
   washiColor = 'amber',
@@ -49,8 +50,17 @@ export default function Polaroid({
     >
       <WashiTape color={washiColor} width="50%" rotation={-3} style={{ top: -8, left: '25%' }} />
 
-      <View style={[styles.emojiBox, { backgroundColor: boxBg }, completed && { opacity: 0.7 }]}>
-        <Text style={{ fontSize: 44 }}>{emoji}</Text>
+      <View style={[
+        styles.emojiBox,
+        { backgroundColor: boxBg },
+        photoUri && { overflow: 'hidden' },
+        completed && { opacity: 0.7 },
+      ]}>
+        {photoUri ? (
+          <Image source={{ uri: photoUri }} style={{ width: '100%', height: '100%' }} />
+        ) : (
+          <Text style={{ fontSize: 44 }}>{emoji}</Text>
+        )}
       </View>
 
       {completed && (
