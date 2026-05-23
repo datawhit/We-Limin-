@@ -13,6 +13,7 @@ import ActivityDetailScreen from './src/screens/ActivityDetailScreen';
 import SquadScreen from './src/screens/SquadScreen';
 import ScrapbookScreen from './src/screens/ScrapbookScreen';
 import AddMemoryScreen from './src/screens/AddMemoryScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
 import { getProfile, getBadges, upsertProfile, uploadPhoto, supabase } from './src/lib/supabase';
 import { COLORS } from './src/lib/constants';
@@ -94,6 +95,11 @@ function RootNavigator() {
   return (
     <RootStack.Navigator screenOptions={{ headerShown: false }}>
       <RootStack.Screen name="Tabs" component={TabNavigator} />
+      <RootStack.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
       <RootStack.Screen
         name="ActivityDetailModal"
         component={ActivityDetailScreen}
