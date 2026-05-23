@@ -59,7 +59,7 @@ export default function ActivitiesScreen({ navigation }) {
   // NEW: lineup-save state + toast feedback
   const [saved, setSaved] = useState([]);              // array of activity ids
   const [toastMsg, setToastMsg] = useState('');
-  const toastAnim = useRef(new Animated.Value(-60)).current;
+  const toastAnim = useRef(new Animated.Value(-80)).current;
 
   const [fontsLoaded] = useFonts({ Caveat_500Medium });
   const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
@@ -139,11 +139,11 @@ export default function ActivitiesScreen({ navigation }) {
   const showToast = (msg) => {
     setToastMsg(msg);
     toastAnim.stopAnimation();
-    toastAnim.setValue(-60);
+    toastAnim.setValue(-80);
     Animated.sequence([
       Animated.spring(toastAnim, { toValue: 12, useNativeDriver: true, friction: 6 }),
       Animated.delay(1400),
-      Animated.timing(toastAnim, { toValue: -60, duration: 250, useNativeDriver: true }),
+      Animated.timing(toastAnim, { toValue: -80, duration: 250, useNativeDriver: true }),
     ]).start();
   };
   const toggleSave = (item) => {
@@ -256,12 +256,14 @@ export default function ActivitiesScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       {/* Floating toast */}
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastAnim }] }]}
-      >
-        <Text style={styles.toastText}>{toastMsg}</Text>
-      </Animated.View>
+      {!!toastMsg && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastAnim }] }]}
+        >
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </Animated.View>
+      )}
 
       {/* ─── Header ─── */}
       <View style={styles.header}>

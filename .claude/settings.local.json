@@ -9,7 +9,12 @@
       "Bash(echo \"---exit $?\")",
       "Bash(grep -n \"Badge button\\\\|earn \\\\${activity.badge}\\\\|Quick search row\\\\|AI Suggestions\" /Users/whitneyalleng/Downloads/lime-native/src/screens/ActivityDetailScreen.js)",
       "Bash(node -e \"console.log\\(require\\('./package.json'\\).dependencies['@expo-google-fonts/caveat'], require\\('./package.json'\\).dependencies['expo-font']\\)\")",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)"
     ]
   }
 }
