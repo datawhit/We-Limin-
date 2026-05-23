@@ -9,7 +9,8 @@ import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import * as ImagePicker from 'expo-image-picker';
 import { AppContext } from '../lib/AppContext';
 import { ACTIVITIES, COLORS, RATINGS, TIER, getTier } from '../lib/constants';
-import { addMemory, uploadPhoto, earnBadge, getMemories } from '../lib/supabase';
+import { addMemory, uploadPhoto, earnBadge, getMemories, supabase } from '../lib/supabase';
+import { HIDDEN_BADGES } from '../lib/hiddenBadges';
 import BadgeUnlockModal from '../components/BadgeUnlockModal';
 import { checkAndUnlockHiddenBadges } from '../lib/hiddenBadges';
 
@@ -46,7 +47,10 @@ export default function AddMemoryScreen({ navigation, route }) {
   const [caption, setCaption] = useState('');
   const [rating, setRating] = useState(null); // legacy — no longer rendered, kept for hook parity
   const [saving, setSaving] = useState(false);
-  const [unlockQueue, setUnlockQueue] = useState([]);
+  // Single unlock modal payload: { badge: {emoji,name,tagline}|null,
+  //                                 tier:  {emoji,name,tagline}|null }
+  // null when no badge unlocked and no tier crossed.
+  const [unlockModal, setUnlockModal] = useState(null);
 
   // ─── NEW state ───
   const [mood, setMood] = useState(null);       // selected mood id, e.g. 'lit'
@@ -115,7 +119,9 @@ export default function AddMemoryScreen({ navigation, route }) {
       });
 
       // Only run badge logic when an activity is attached. Standalone
-      // memories don't unlock activity badges.
+      // memories don't unlock activity badges (but may still unlock
+      // hidden badges via the time-based detectors below).
+      const prevBadgeCount = myBadges.length;
       const justEarnedBadge = !!activity && !myBadges.includes(activity.id);
       let nextBadges = myBadges;
       if (justEarnedBadge) {
@@ -124,41 +130,70 @@ export default function AddMemoryScreen({ navigation, route }) {
         setMyBadges(nextBadges);
       }
 
-      const payloads = [];
-      if (justEarnedBadge) {
-        const prevTier = getTier(myBadges.length);
-        const nextTier = getTier(nextBadges.length);
-        payloads.push({
-          emoji:       activity.badge || '🏅',
-          name:        activity.name,
-          tierName:    nextTier.name,
-          tierEmoji:   nextTier.emoji,
-          tierTagline: nextTier.tagline,
-          leveledUp:   prevTier.name !== nextTier.name,
-        });
-      }
-
+      // Hidden badges — in-memory check (writes to AsyncStorage, not
+      // the badges table). Returns whichever new badges this save
+      // unlocked, in priority order.
+      let newlyHidden = [];
       try {
         const allMems = await getMemories().catch(() => []);
         const mineAfter = allMems.filter(m => m.profile_id === profile.id);
-        const newly = await checkAndUnlockHiddenBadges({
+        newlyHidden = await checkAndUnlockHiddenBadges({
           trigger: 'memory_added',
           memory: { created_at: new Date().toISOString(), activity_id: activity?.id || null, profile_ids: [profile.id] },
           allMemoriesForUser: mineAfter,
         });
-        newly.forEach(b => payloads.push({
-          emoji: b.emoji, name: b.name,
-          tierName: 'Hidden badge', tierEmoji: '✨', tierTagline: b.hint,
-          leveledUp: false,
-        }));
       } catch (e) { /* hidden-badge check is best-effort */ }
 
+      // Per spec: confirm activity-badge insert by querying recent rows
+      // on the badges table (last 5s). Hidden badges don't live here.
+      let recentActivityBadgeId = null;
+      try {
+        const since = new Date(Date.now() - 5000).toISOString();
+        const { data: recentDbBadges } = await supabase
+          .from('badges')
+          .select('*')
+          .eq('profile_id', profile.id)
+          .gte('earned_at', since)
+          .order('earned_at', { ascending: false });
+        recentActivityBadgeId = recentDbBadges?.[0]?.activity_id ?? null;
+      } catch (e) { /* fall back to in-memory justEarnedBadge */ }
+
+      // Priority: Hidden > Activity > none.
+      // (Special / Adventure / Regular tiers all collapse into "activity"
+      //  here — the seed list doesn't carry a separate Adventure flag.)
+      let primaryBadge = null;
+      if (newlyHidden.length > 0) {
+        const h = newlyHidden[0];
+        primaryBadge = { emoji: h.emoji, name: h.name, tagline: h.hint };
+      } else if (recentActivityBadgeId || justEarnedBadge) {
+        const a = activity && (recentActivityBadgeId == null || recentActivityBadgeId === activity.id)
+          ? activity
+          : null;
+        if (a) {
+          primaryBadge = {
+            emoji:   a.badge || '🏅',
+            name:    a.name,
+            tagline: `${a.tier} tier · lived ✓`,
+          };
+        }
+      }
+
+      // Tier crossover — compare before/after badge counts.
+      const prevTier = getTier(prevBadgeCount);
+      const nextTier = getTier(nextBadges.length);
+      const tierCrossed = prevTier.name !== nextTier.name;
+      const tierPayload = tierCrossed ? {
+        emoji:   nextTier.emoji,
+        name:    nextTier.name,
+        tagline: nextTier.tagline,
+      } : null;
+
       setSaving(false);
-      if (payloads.length === 0) {
+      if (!primaryBadge && !tierPayload) {
         navigation.goBack();
         return;
       }
-      setUnlockQueue(payloads);
+      setUnlockModal({ badge: primaryBadge, tier: tierPayload });
     } catch (e) {
       console.error(e);
       Alert.alert('Oops', 'Could not save memory. Try again?');
@@ -166,12 +201,9 @@ export default function AddMemoryScreen({ navigation, route }) {
     }
   };
 
-  const advanceUnlock = () => {
-    setUnlockQueue(q => {
-      const next = q.slice(1);
-      if (next.length === 0) navigation.goBack();
-      return next;
-    });
+  const dismissUnlockModal = () => {
+    setUnlockModal(null);
+    navigation.goBack();
   };
 
   const tierBg = activity ? (TIER_BG[activity.tier] || PASTELS.coralBg) : PASTELS.coralBg;
@@ -179,9 +211,10 @@ export default function AddMemoryScreen({ navigation, route }) {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <BadgeUnlockModal
-        visible={unlockQueue.length > 0}
-        payload={unlockQueue[0]}
-        onClose={advanceUnlock}
+        visible={!!unlockModal}
+        badge={unlockModal?.badge || null}
+        tier={unlockModal?.tier || null}
+        onDismiss={dismissUnlockModal}
       />
 
       {/* Header — outside ScrollView so it never scrolls under status bar */}
