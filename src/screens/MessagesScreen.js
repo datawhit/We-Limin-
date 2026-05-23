@@ -124,7 +124,10 @@ export default function MessagesScreen({ visible, onClose }) {
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safe} edges={['bottom']}>
         {toastText && (
-          <Animated.View style={[styles.toast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
+          <Animated.View
+            style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastY }] }]}
+            pointerEvents="none"
+          >
             <Text style={styles.toastText}>{toastText}</Text>
           </Animated.View>
         )}
@@ -324,9 +327,9 @@ const styles = StyleSheet.create({
   footer: { marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' },
   acceptBtn: { backgroundColor: COLORS.coral, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, minWidth: 80, alignItems: 'center' },
   toast: {
-    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    position: 'absolute', left: 22, right: 22, zIndex: 9999, elevation: 10,
     backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 },
   },
   toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
   acceptText: { color: '#fff', fontSize: 13, fontWeight: '700' },

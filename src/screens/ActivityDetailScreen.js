@@ -340,7 +340,10 @@ export default function ActivityDetailScreen({ route, navigation }) {
         onSent={handleInviteSent}
       />
       {toastVisible && (
-        <Animated.View style={[styles.inviteToast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
+        <Animated.View
+          style={[styles.inviteToast, { top: insets.top + 12, transform: [{ translateY: toastY }] }]}
+          pointerEvents="none"
+        >
           <Text style={styles.inviteToastText}>{toastText}</Text>
         </Animated.View>
       )}
@@ -937,11 +940,12 @@ const styles = StyleSheet.create({
   pinInput: { backgroundColor: '#fff', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: COLORS.cardBorder, fontSize: 13, color: COLORS.dark },
   miniBtn: { padding: 12, borderRadius: 12, alignItems: 'center', flex: 1 },
 
-  // Invite-sent toast
+  // Invite-sent toast — `top` is applied inline from useSafeAreaInsets()
+  // so it sits below the Dynamic Island even inside the root-stack modal.
   inviteToast: {
-    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    position: 'absolute', left: 22, right: 22, zIndex: 9999, elevation: 10,
     backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 },
   },
   inviteToastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 

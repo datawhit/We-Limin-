@@ -258,7 +258,7 @@ export default function ActivitiesScreen({ navigation }) {
       {/* Floating toast */}
       <Animated.View
         pointerEvents="none"
-        style={[styles.toast, { transform: [{ translateY: toastAnim }] }]}
+        style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastAnim }] }]}
       >
         <Text style={styles.toastText}>{toastMsg}</Text>
       </Animated.View>
@@ -753,9 +753,9 @@ const styles = StyleSheet.create({
 
   // Toast
   toast: {
-    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    position: 'absolute', left: 22, right: 22, zIndex: 9999, elevation: 10,
     backgroundColor: COLORS.dark, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 },
   },
   toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 });

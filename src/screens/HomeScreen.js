@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, Image, Animated, Easing,
   StyleSheet, RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useFonts, Caveat_500Medium, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { AppContext } from '../lib/AppContext';
@@ -63,6 +63,7 @@ export default function HomeScreen() {
   // ─── PRESERVED: all hooks, state, effects, AppContext, navigation ───
   const { profile, myBadges, setMyBadges } = useContext(AppContext);
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   // Handwritten font — falls back to system if not yet loaded.
   const [fontsLoaded] = useFonts({ Caveat_500Medium, Caveat_700Bold });
@@ -95,12 +96,15 @@ export default function HomeScreen() {
 
   const saveSpinPick = async () => {
     if (!spinPick || savingPick) return;
+    console.log('[home] saveSpinPick EXPLICIT TAP — activity =', spinPick.name, 'id =', spinPick.id);
     setSavingPick(true);
     try {
       const existing = await getUserActivity(profile.id, spinPick.id).catch(() => null);
       if (existing) {
+        console.log('[home] saveSpinPick — existing row id', existing.id, '— skipping insert');
         flashToast('already in your lineup ✨');
       } else {
+        console.log('[home] saveSpinPick — inserting NEW row, source=lime_pick');
         const { error } = await supabase.from('user_activities').insert({
           profile_id: profile.id,
           activity_id: spinPick.id,
@@ -187,6 +191,7 @@ export default function HomeScreen() {
         const final = eligible[Math.floor(Math.random() * eligible.length)];
         setPreviewPick(final);
         setSpinPick(final);
+        console.log('[home] spin completed — spinPick set to', final.name, '— NO DB WRITE from this code path');
         spinRotation.stopAnimation(() => spinRotation.setValue(0));
         setSpinning(false);
       }
@@ -266,7 +271,10 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {toastText && (
-        <Animated.View style={[styles.toast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
+        <Animated.View
+          style={[styles.toast, { top: insets.top + 12, transform: [{ translateY: toastY }] }]}
+          pointerEvents="none"
+        >
           <Text style={styles.toastText}>{toastText}</Text>
         </Animated.View>
       )}
@@ -652,11 +660,12 @@ const styles = StyleSheet.create({
   saveForLaterWrap: { marginTop: 12, position: 'relative', alignItems: 'center', minHeight: 44, justifyContent: 'center' },
   saveForLaterText: { color: '#E8704F', fontSize: 16, lineHeight: 20, letterSpacing: -0.2 },
 
-  // Inline toast (shared across save actions)
+  // Inline toast (shared across save actions) — `top` is applied inline
+  // from useSafeAreaInsets() so it sits below the Dynamic Island.
   toast: {
-    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    position: 'absolute', left: 22, right: 22, zIndex: 9999, elevation: 10,
     backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 },
   },
   toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 
