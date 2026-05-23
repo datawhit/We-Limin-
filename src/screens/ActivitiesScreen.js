@@ -1,10 +1,11 @@
-import React, { useContext, useState, useEffect, useMemo } from 'react';
+import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, TextInput, Modal,
+  View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Animated,
   StyleSheet, FlatList, Alert,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppContext } from '../lib/AppContext';
 import { ACTIVITIES, COLORS, TIER } from '../lib/constants';
@@ -12,7 +13,14 @@ import {
   getUserActivities, upsertUserActivity, deleteUserActivity, setReaction,
 } from '../lib/supabase';
 
+// ─── Design system primitives ─────────────────────────────
+import WashiTape from '../components/WashiTape';
+import { Star, Sparkle, CurvedArrow } from '../components/Doodles';
+import { PASTELS, HANDWRITTEN_500 } from '../lib/theme';
+
 const CUSTOM_KEY = 'lime_custom_activities';
+const SAVED_KEY  = 'lime_saved_activities';
+
 const TIER_OPTIONS = [
   { id: 'chill', label: 'Chill', sub: 'low-key & easy' },
   { id: 'bold',  label: 'Bold',  sub: 'step it up'    },
@@ -20,20 +28,40 @@ const TIER_OPTIONS = [
 ];
 const EMOJI_PRESETS = ['🎉','🍹','🌴','🌊','🎨','🍿','🏝️','🧘','🎶','🛼','⛵','🌅','🎪','🥥','🧗','🎤'];
 
+// Tier-tinted pastels for the emoji square on each activity row.
+const TIER_BG = {
+  chill: PASTELS.mintBg,
+  bold:  PASTELS.amberBg,
+  wild:  PASTELS.lavenderBg,
+};
+
+// Washi color cycle for activity row corner tape.
+// Pink only appears 1-in-9 to keep the look from leaning pink.
+const ROW_WASHI = ['coral', 'blue', 'amber', 'lavender', 'coral', 'blue', 'amber', 'lavender', 'pink'];
+
 export default function ActivitiesScreen({ navigation }) {
+  // ─── PRESERVED: all hooks, state, handlers, data wiring ───
   const { profile, myBadges } = useContext(AppContext);
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [custom, setCustom] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingActivity, setEditingActivity] = useState(null); // null = creating
-  const [menuFor, setMenuFor] = useState(null); // activity object whose ⋮ menu is open
+  const [menuFor, setMenuFor] = useState(null); // ⋮ menu target
   const insets = useSafeAreaInsets();
+
+  // NEW: lineup-save state + toast feedback
+  const [saved, setSaved] = useState([]);              // array of activity ids
+  const [toastMsg, setToastMsg] = useState('');
+  const toastAnim = useRef(new Animated.Value(-60)).current;
+
+  const [fontsLoaded] = useFonts({ Caveat_500Medium });
+  const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
 
   const accent = profile.accent_color || COLORS.coral;
   const accentText = profile.accent_text || '#2d5a00';
 
-  useEffect(() => { loadCustom(); }, []);
+  useEffect(() => { loadCustom(); loadSaved(); }, []);
 
   const loadCustom = async () => {
     // Try Supabase first; fall back to AsyncStorage cache when remote
@@ -52,6 +80,13 @@ export default function ActivitiesScreen({ navigation }) {
     } catch (e) { setCustom([]); }
   };
 
+  const loadSaved = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(SAVED_KEY);
+      setSaved(raw ? JSON.parse(raw) : []);
+    } catch (e) { setSaved([]); }
+  };
+
   const persistCustom = async (next) => {
     setCustom(next);
     AsyncStorage.setItem(CUSTOM_KEY, JSON.stringify(next)).catch(() => {});
@@ -63,34 +98,24 @@ export default function ActivitiesScreen({ navigation }) {
     return { ...rest, profile_id: profile.id };
   };
 
-  // Edits to seed activities create per-user override rows in
-  // user_activities (same id as the seed). New activities use a
-  // timestamp id. Either way it's a single upsert.
   const saveActivity = async (item) => {
     const payload = toPayload(item);
-    let saved = payload;
-    try { saved = await upsertUserActivity(payload); }
+    let savedRow = payload;
+    try { savedRow = await upsertUserActivity(payload); }
     catch (e) { /* falls back to local cache */ }
-    const without = custom.filter(c => c.id !== saved.id);
-    persistCustom([saved, ...without]);
+    const without = custom.filter(c => c.id !== savedRow.id);
+    persistCustom([savedRow, ...without]);
   };
 
-  // Delete semantics:
-  //   - Override row on a seed id → row is removed (seed defaults reappear)
-  //   - Net-new custom row → row is removed
-  //   - Pure seed (no override) → Delete is hidden in the menu; this is a no-op
   const removeActivity = async (item) => {
     if (!item._userOwned) return;
     try { await deleteUserActivity(item.id); } catch (e) { /* local fallback */ }
     persistCustom(custom.filter(c => c.id !== item.id));
   };
 
-  // Pinning a pure seed creates an override row carrying the seed's
-  // fields + pinned: true. Pinning an existing custom/override just
-  // flips the flag.
   const togglePin = async (item) => {
     const existing = custom.find(c => c.id === item.id);
-    const base = existing || item; // start from override if present, else seed
+    const base = existing || item;
     const updated = { ...base, pinned: !base.pinned };
     saveActivity(updated);
   };
@@ -100,29 +125,42 @@ export default function ActivitiesScreen({ navigation }) {
       await setReaction({ activityId: item.id, profileId: profile.id, reaction: '🙌' });
     } catch (e) { /* best-effort */ }
     Alert.alert("Sent to the squad",
-      `“${item.name}” is in the squad mix. It'll show up in Trending Limes when reactions roll in.`);
+      `"${item.name}" is in the squad mix. It'll show up in Trending Limes when reactions roll in.`);
+  };
+
+  // NEW — Save / unsave from Lineup. Locally persisted; will swap to
+  // a lineup table when the schema lands.
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    toastAnim.stopAnimation();
+    toastAnim.setValue(-60);
+    Animated.sequence([
+      Animated.spring(toastAnim, { toValue: 12, useNativeDriver: true, friction: 6 }),
+      Animated.delay(1400),
+      Animated.timing(toastAnim, { toValue: -60, duration: 250, useNativeDriver: true }),
+    ]).start();
+  };
+  const toggleSave = (item) => {
+    const isSaved = saved.includes(item.id);
+    const next = isSaved
+      ? saved.filter(id => id !== item.id)
+      : [...saved, item.id];
+    setSaved(next); // optimistic
+    AsyncStorage.setItem(SAVED_KEY, JSON.stringify(next)).catch(() => {});
+    showToast(isSaved ? 'Removed from Lineup' : 'Added to Lineup ✓');
   };
 
   // Merge seeds with user_activities, overrides winning on shared ids.
-  // Result is tagged with _userOwned so the row menu can hide Delete
-  // for pure seeds. Order: pinned first (overrides + seeds), then the
-  // rest in their original sequence.
+  // _userOwned is set so the row menu can hide Delete for pure seeds.
   const all = useMemo(() => {
     const map = new Map();
     ACTIVITIES.forEach(a => map.set(a.id, { ...a, _userOwned: false }));
     custom.forEach(c => map.set(c.id, { ...c, custom: true, _userOwned: true }));
     const list = Array.from(map.values());
-    const pinned = list.filter(a => a.pinned);
+    const pinned   = list.filter(a => a.pinned);
     const unpinned = list.filter(a => !a.pinned);
     return [...pinned, ...unpinned];
   }, [custom]);
-
-  const filters = useMemo(() => ([
-    { id: 'all',   label: 'All',   count: all.length },
-    { id: 'chill', label: 'Chill', count: all.filter(a => a.tier === 'chill').length },
-    { id: 'bold',  label: 'Bold',  count: all.filter(a => a.tier === 'bold').length },
-    { id: 'wild',  label: 'Wild',  count: all.filter(a => a.tier === 'wild').length },
-  ]), [all]);
 
   const filtered = useMemo(() => {
     let list = all;
@@ -134,102 +172,185 @@ export default function ActivitiesScreen({ navigation }) {
     return list;
   }, [filter, query, all]);
 
-  const renderItem = ({ item }) => {
+  const filters = useMemo(() => {
+    // "All N" updates with the current search query so the counts
+    // reflect what the user sees.
+    const base = query.trim()
+      ? all.filter(a => a.name.toLowerCase().includes(query.toLowerCase()))
+      : all;
+    return [
+      { id: 'all',   label: `all ${base.length}` },
+      { id: 'chill', label: `chill ${base.filter(a => a.tier === 'chill').length}` },
+      { id: 'bold',  label: `bold ${base.filter(a => a.tier === 'bold').length}` },
+      { id: 'wild',  label: `wild ${base.filter(a => a.tier === 'wild').length}` },
+    ];
+  }, [all, query]);
+
+  const renderItem = ({ item, index }) => {
     const earned = myBadges.includes(item.id);
     const t = TIER[item.tier] || { bg: COLORS.cream, text: COLORS.dark, label: '' };
-    // _userOwned tells us whether the row originates from user_activities
-    // (a seed override OR a net-new custom). Pure seeds without an
-    // override are read-only for Delete but editable in every other way.
+    const isSaved = saved.includes(item.id);
+    const washi = ROW_WASHI[index % ROW_WASHI.length];
     return (
-      <View style={[styles.card, earned && styles.cardEarned]}>
+      <View style={styles.activityCard}>
+        <WashiTape
+          color={washi}
+          width={48}
+          height={12}
+          rotation={-3}
+          opacity={0.75}
+          style={{ top: -4, left: 18 }}
+        />
+
         <TouchableOpacity
           onPress={() => navigation.navigate('ActivityDetail', { activity: item })}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}
-          activeOpacity={0.7}
+          style={styles.activityMain}
+          activeOpacity={0.85}
         >
-          <View style={[styles.emojiBox, { backgroundColor: earned ? accent : t.bg }]}>
-            <Text style={{ fontSize: 28 }}>{earned ? (item.badge || item.emoji) : item.emoji}</Text>
+          <View style={[styles.activityEmoji, { backgroundColor: TIER_BG[item.tier] || PASTELS.coralBg }]}>
+            <Text style={{ fontSize: 26 }}>{earned ? (item.badge || item.emoji) : item.emoji}</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={styles.titleRow}>
               {item.pinned && <Text style={styles.pinChip}>📌</Text>}
-              <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
+              <Text style={styles.activityName} numberOfLines={1}>{item.name}</Text>
             </View>
-            <View style={styles.cardMeta}>
+            <View style={styles.tierRow}>
               <View style={[styles.tierDot, { backgroundColor: t.text }]} />
-              <Text style={styles.tierText}>{t.label}</Text>
-              {item.tripType && <Text style={styles.tripText}>· Trip</Text>}
-              {item._userOwned && <Text style={styles.tripText}>· Yours</Text>}
-              {earned && <Text style={[styles.doneText, { color: accentText }]}>· Done ✓</Text>}
+              <Text style={styles.tierText}>{(t.label || '').toLowerCase()}</Text>
+              {item.tripType   && <Text style={styles.metaExtra}>· trip</Text>}
+              {item._userOwned && <Text style={styles.metaExtra}>· yours</Text>}
+              {earned          && <Text style={[styles.metaDone, { color: accentText }]}>· done ✓</Text>}
             </View>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setMenuFor(item)} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }} style={styles.menuBtn}>
-          <Text style={styles.menuDots}>⋮</Text>
-        </TouchableOpacity>
+
+        <View style={styles.activityActions}>
+          <TouchableOpacity
+            onPress={() => toggleSave(item)}
+            style={[styles.saveBtn, isSaved && styles.saveBtnOn]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.saveBtnText, isSaved && styles.saveBtnTextOn]}>
+              {isSaved ? '✓' : '+'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setMenuFor(item)}
+            style={styles.menuBtn}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+          >
+            <Text style={styles.menuDots}>⋮</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
 
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Floating toast */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.toast, { transform: [{ translateY: toastAnim }] }]}
+      >
+        <Text style={styles.toastText}>{toastMsg}</Text>
+      </Animated.View>
+
+      {/* ─── Header ─── */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Activities</Text>
-          <Text style={styles.subtitle}>{myBadges.length} of {all.length} done</Text>
+        <View style={styles.titleHeaderRow}>
+          <Text style={[styles.title, HAND_500 && { fontFamily: HAND_500 }]}>explore</Text>
+          <Sparkle size={20} color={COLORS.palmGreen} opacity={0.55} style={{ left: 10, top: 6 }} />
+          <Star size={11} color={COLORS.coral} opacity={0.5} style={{ right: 4, top: 4 }} />
         </View>
+        <Text style={styles.subtitle}>find ideas, limes, and inspo</Text>
       </View>
 
-      <View style={{ paddingHorizontal: 22, marginBottom: 14 }}>
+      {/* ─── Search ─── */}
+      <View style={styles.searchWrap}>
+        <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search activities…"
+          placeholder="search activities, places, vibes..."
           placeholderTextColor="#bbb"
           style={styles.search}
         />
       </View>
 
+      {/* ─── Filter pills ─── */}
       <View style={styles.filterRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 22, gap: 8 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 22, gap: 10, alignItems: 'center' }}
+        >
           {filters.map(f => {
-            const active = filter === f.id;
-            const isAll = f.id === 'all';
-            const activeBg   = isAll ? COLORS.dark : TIER[f.id].bg;
-            const activeFg   = isAll ? COLORS.cream : TIER[f.id].text;
+            const on = filter === f.id;
             return (
-              <TouchableOpacity key={f.id} onPress={() => setFilter(f.id)}
-                style={[styles.filterChip, {
-                  backgroundColor: active ? activeBg : '#fff',
-                  borderColor:    active ? activeBg : 'rgba(0,0,0,0.05)',
-                }]}>
-                <Text style={[styles.filterText, { color: active ? activeFg : '#888' }]}>
-                  {f.label} <Text style={{ opacity: 0.7 }}>{f.count}</Text>
-                </Text>
-              </TouchableOpacity>
+              <View key={f.id} style={styles.filterChipWrap}>
+                {on && (
+                  <WashiTape
+                    color="amber"
+                    width={110}
+                    height={30}
+                    rotation={-2}
+                    opacity={0.7}
+                    style={{ top: 3, left: -6 }}
+                  />
+                )}
+                <TouchableOpacity
+                  onPress={() => setFilter(f.id)}
+                  style={[styles.filterChip, on && styles.filterChipOn]}
+                >
+                  <Text style={[styles.filterText, on && styles.filterTextOn]}>{f.label}</Text>
+                </TouchableOpacity>
+              </View>
             );
           })}
         </ScrollView>
       </View>
 
+      {/* ─── List ─── */}
       <FlatList
         style={{ flex: 1 }}
         data={filtered}
         keyExtractor={(i) => String(i.id)}
-        contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 140 }}
         renderItem={renderItem}
+        ListHeaderComponent={
+          <View pointerEvents="none" style={styles.listAccents}>
+            <Sparkle size={14} color={COLORS.amber} opacity={0.55} style={{ right: -4, top: 2 }} />
+            <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: -6, top: 28 }} />
+          </View>
+        }
+        ListFooterComponent={
+          <View pointerEvents="none" style={styles.listFooterAccents}>
+            <CurvedArrow size={42} color={COLORS.coral} opacity={0.45} style={{ left: 18, top: 14, transform: [{ rotate: '90deg' }] }} />
+            <Sparkle size={12} color={COLORS.amber} opacity={0.55} style={{ right: 40, top: 28 }} />
+            <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: '50%', top: 60 }} />
+          </View>
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={{ fontSize: 36, marginBottom: 10 }}>🔍</Text>
-            <Text style={{ color: '#aaa' }}>Nothing matches that</Text>
+            <Text style={{ color: '#aaa' }}>nothing matches that</Text>
           </View>
         }
       />
 
-      {/* FAB */}
+      {/* ─── FAB ─── */}
       <TouchableOpacity
         onPress={() => { setEditingActivity(null); setModalOpen(true); }}
-        style={[styles.fab, { bottom: 24 + (insets.bottom || 0), backgroundColor: COLORS.coral }]}
+        style={[
+          styles.fab,
+          {
+            bottom: 24 + (insets.bottom || 0),
+            backgroundColor: COLORS.coral,
+            transform: [{ rotate: '-3deg' }],
+          },
+        ]}
         activeOpacity={0.85}
       >
         <Text style={styles.fabPlus}>＋</Text>
@@ -252,15 +373,12 @@ export default function ActivitiesScreen({ navigation }) {
         onEdit={(it)    => { setMenuFor(null); setEditingActivity(it); setModalOpen(true); }}
         onDelete={(it)  => {
           setMenuFor(null);
-          // Seeds (id 1-59) can only be "reset" — we drop the override
-          // and the default seed values reappear. Net-new customs are
-          // deleted outright.
           const isSeedOverride = it.id <= 59;
           Alert.alert(
             isSeedOverride ? 'Reset to default?' : 'Delete this activity?',
             isSeedOverride
-              ? `Your edits to “${it.name}” will be cleared and the default values restored.`
-              : `“${it.name}” will be removed.`,
+              ? `Your edits to "${it.name}" will be cleared and the default values restored.`
+              : `"${it.name}" will be removed.`,
             [
               { text: 'Cancel', style: 'cancel' },
               { text: isSeedOverride ? 'Reset' : 'Delete', style: 'destructive', onPress: () => removeActivity(it) },
@@ -276,10 +394,6 @@ export default function ActivitiesScreen({ navigation }) {
 
 // ─── ⋮ Menu ───────────────────────────────────────────────
 function RowMenu({ item, onClose, onEdit, onDelete, onPin, onSuggest }) {
-  // Pure seeds (no override yet) can be edited, pinned, suggested —
-  // but not deleted, since deleting the seed globally isn't a thing
-  // we want to expose to one user. Editing first creates an override
-  // row, which is then deletable from this same menu.
   const canDelete = !!item?._userOwned;
   return (
     <Modal visible={!!item} transparent animationType="fade" onRequestClose={onClose}>
@@ -429,30 +543,86 @@ function EditorHeader({ title, onClose }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.cream },
-  header: { padding: 22, paddingBottom: 14 },
-  title: { fontSize: 30, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.6 },
-  subtitle: { fontSize: 13, color: '#999', marginTop: 4 },
-  search: { backgroundColor: '#fff', padding: 14, borderRadius: 14, fontSize: 14, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', color: COLORS.dark },
-  filterRow: { height: 44, marginBottom: 14 },
-  filterChip: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1 },
-  filterText: { fontSize: 12, fontWeight: '700' },
 
-  card: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 18, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  cardEarned: { backgroundColor: '#fcfaf3' },
-  emojiBox: { width: 56, height: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontSize: 15, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 5 },
+  // Header
+  header: { paddingHorizontal: 22, paddingTop: 8, paddingBottom: 10 },
+  titleHeaderRow: { position: 'relative', flexDirection: 'row', alignItems: 'center', height: 46 },
+  title: { fontSize: 32, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 42 },
+  subtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+
+  // Search
+  searchWrap: {
+    marginHorizontal: 22,
+    marginTop: 6, marginBottom: 14,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    paddingHorizontal: 14,
+    height: 44,
+  },
+  searchIcon: { fontSize: 16, marginRight: 8, color: '#888' },
+  search: { flex: 1, fontSize: 14, color: COLORS.dark, paddingVertical: 0 },
+
+  // Filter pills
+  filterRow: { height: 50, marginBottom: 10 },
+  filterChipWrap: { position: 'relative' },
+  filterChip: {
+    paddingHorizontal: 16, height: 36, borderRadius: 999,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    flexDirection: 'row',
+  },
+  filterChipOn: { backgroundColor: COLORS.coral, borderColor: COLORS.coral },
+  filterText: { fontSize: 13, fontWeight: '600', color: COLORS.dark, letterSpacing: 0.1, textTransform: 'lowercase' },
+  filterTextOn: { color: '#fff' },
+
+  // Activity row card
+  activityCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    padding: 12,
+    marginBottom: 10,
+    position: 'relative',
+    shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 1,
+  },
+  activityMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  activityEmoji: {
+    width: 52, height: 52, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  activityName: { fontSize: 15, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
+  tierRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 5 },
   tierDot: { width: 6, height: 6, borderRadius: 3 },
-  tierText: { fontSize: 11, color: '#999', fontWeight: '600' },
-  tripText: { fontSize: 11, color: '#aaa' },
-  doneText: { fontSize: 11, fontWeight: '700' },
-  chevron: { color: '#ccc', fontSize: 22, paddingHorizontal: 4 },
+  tierText: { fontSize: 12, color: '#888', fontWeight: '600' },
+  metaExtra: { fontSize: 11, color: '#aaa' },
+  metaDone: { fontSize: 11, fontWeight: '700' },
   pinChip: { fontSize: 11 },
-  menuBtn: { paddingHorizontal: 8, paddingVertical: 4 },
+
+  activityActions: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 6 },
+  saveBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1.5, borderColor: '#aaa',
+  },
+  saveBtnOn: { backgroundColor: COLORS.coral, borderColor: COLORS.coral },
+  saveBtnText: { fontSize: 16, color: '#888', fontWeight: '700', lineHeight: 18 },
+  saveBtnTextOn: { color: '#fff' },
+  menuBtn: { paddingHorizontal: 6, paddingVertical: 4 },
   menuDots: { fontSize: 22, color: '#888', fontWeight: '700' },
 
   empty: { padding: 50, alignItems: 'center' },
 
+  // Decorative accents inside the list
+  listAccents: { height: 36, position: 'relative' },
+  listFooterAccents: { height: 90, position: 'relative' },
+
+  // FAB
   fab: {
     position: 'absolute', right: 22,
     width: 60, height: 60, borderRadius: 30,
@@ -461,6 +631,14 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   fabPlus: { color: '#fff', fontSize: 30, fontWeight: '500', marginTop: -3 },
+
+  // Toast
+  toast: {
+    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    backgroundColor: COLORS.dark, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 18,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+  },
+  toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 });
 
 const menuStyles = StyleSheet.create({
