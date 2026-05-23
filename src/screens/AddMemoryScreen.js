@@ -1,10 +1,11 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Image,
-  StyleSheet, ActivityIndicator, Alert, Modal, FlatList,
+  StyleSheet, ActivityIndicator, Alert,
   KeyboardAvoidingView, Platform, Pressable,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import * as ImagePicker from 'expo-image-picker';
 import { AppContext } from '../lib/AppContext';
 import { ACTIVITIES, COLORS, RATINGS, TIER, getTier } from '../lib/constants';
@@ -12,25 +13,63 @@ import { addMemory, uploadPhoto, earnBadge, getMemories } from '../lib/supabase'
 import BadgeUnlockModal from '../components/BadgeUnlockModal';
 import { checkAndUnlockHiddenBadges } from '../lib/hiddenBadges';
 
-export default function AddMemoryScreen({ navigation }) {
+// ─── Design system primitives ─────────────────────────────
+import WashiTape from '../components/WashiTape';
+import { Star, Sparkle, CurvedArrow } from '../components/Doodles';
+import { PASTELS, HANDWRITTEN_500 } from '../lib/theme';
+
+// Pastel emoji-square color per tier (used in the prefill card).
+const TIER_BG = {
+  chill: PASTELS.mintBg,
+  bold:  PASTELS.amberBg,
+  wild:  PASTELS.lavenderBg,
+};
+
+// Mood tiles (id → emoji/label/pastel). The id is what we persist to
+// the `mood` column on memories; the rest is display-only.
+const MOODS = [
+  { id: 'good_vibes',  emoji: '😊', label: 'good vibes',  bg: PASTELS.amberBg    },
+  { id: 'lit',         emoji: '🔥', label: 'lit',         bg: PASTELS.coralBg    },
+  { id: 'chill',       emoji: '💚', label: 'chill',       bg: PASTELS.mintBg     },
+  { id: 'core_memory', emoji: '🥹', label: 'core memory', bg: PASTELS.lavenderBg },
+];
+
+export default function AddMemoryScreen({ navigation, route }) {
   const { profile, myBadges, setMyBadges } = useContext(AppContext);
   const accent = profile.accent_color || COLORS.coral;
-  const accentText = profile.accent_text || '#2d5a00';
+  const accentText = profile.accent_text || '#FFFFFF';
+  const insets = useSafeAreaInsets();
 
+  // ─── PRESERVED hooks ───
   const [activity, setActivity] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [caption, setCaption] = useState('');
-  const [rating, setRating] = useState(null);
+  const [rating, setRating] = useState(null); // legacy — no longer rendered, kept for hook parity
   const [saving, setSaving] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  // Queue of badge unlock payloads — popped off as the user dismisses.
-  // When the queue empties, we finally navigate back.
   const [unlockQueue, setUnlockQueue] = useState([]);
 
-  const filteredActivities = search.trim()
-    ? ACTIVITIES.filter(a => a.name.toLowerCase().includes(search.toLowerCase()))
-    : ACTIVITIES;
+  // ─── NEW state ───
+  const [mood, setMood] = useState(null);       // selected mood id, e.g. 'lit'
+  const [location, setLocation] = useState(''); // free-text venue/city
+
+  // Pre-fill from "capture this lime" navigation. ActivityDetailScreen
+  // passes route.params.prefillActivity = { id, name, emoji, tier }.
+  // Resolve to a full ACTIVITIES entry so the prefill card renders the
+  // tier-tinted square and the save payload carries activity_id.
+  const prefillActivity = route?.params?.prefillActivity;
+  useEffect(() => {
+    if (!prefillActivity?.id) return;
+    const match = ACTIVITIES.find(a => a.id === prefillActivity.id);
+    setActivity(match || {
+      id: prefillActivity.id,
+      name: prefillActivity.name,
+      emoji: prefillActivity.emoji,
+      tier: prefillActivity.tier,
+    });
+  }, [prefillActivity?.id]);
+
+  const [fontsLoaded] = useFonts({ Caveat_500Medium });
+  const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
 
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -49,7 +88,10 @@ export default function AddMemoryScreen({ navigation }) {
     }
   };
 
-  const canSave = activity && photo && rating && !saving;
+  // A photo is the one required input. Mood/caption/location are all
+  // optional; activity is only attached when prefilled from
+  // "capture this lime".
+  const canSave = !!photo && !saving;
 
   const save = async () => {
     if (!canSave) return;
@@ -58,13 +100,17 @@ export default function AddMemoryScreen({ navigation }) {
       const photoUrl = await uploadPhoto(photo, profile.id);
       await addMemory({
         profile_id: profile.id,
-        activity_id: activity.id,
+        activity_id: activity?.id || null,
         photo_url: photoUrl,
-        caption: caption.trim(),
-        rating: rating.label,
+        caption: caption.trim() || null,
+        rating: rating?.label || null,
+        mood: mood || null,
+        location: location.trim() || null,
       });
 
-      const justEarnedBadge = !myBadges.includes(activity.id);
+      // Only run badge logic when an activity is attached. Standalone
+      // memories don't unlock activity badges.
+      const justEarnedBadge = !!activity && !myBadges.includes(activity.id);
       let nextBadges = myBadges;
       if (justEarnedBadge) {
         await earnBadge(profile.id, activity.id);
@@ -72,8 +118,6 @@ export default function AddMemoryScreen({ navigation }) {
         setMyBadges(nextBadges);
       }
 
-      // Build the unlock queue: activity badge first (if newly earned),
-      // then hidden badges triggered by adding this memory.
       const payloads = [];
       if (justEarnedBadge) {
         const prevTier = getTier(myBadges.length);
@@ -89,12 +133,11 @@ export default function AddMemoryScreen({ navigation }) {
       }
 
       try {
-        // Pull all memories for first-memory ("Bus' a Lime") detection.
         const allMems = await getMemories().catch(() => []);
         const mineAfter = allMems.filter(m => m.profile_id === profile.id);
         const newly = await checkAndUnlockHiddenBadges({
           trigger: 'memory_added',
-          memory: { created_at: new Date().toISOString(), activity_id: activity.id, profile_ids: [profile.id] },
+          memory: { created_at: new Date().toISOString(), activity_id: activity?.id || null, profile_ids: [profile.id] },
           allMemoriesForUser: mineAfter,
         });
         newly.forEach(b => payloads.push({
@@ -125,56 +168,66 @@ export default function AddMemoryScreen({ navigation }) {
     });
   };
 
+  const tierBg = activity ? (TIER_BG[activity.tier] || PASTELS.coralBg) : PASTELS.coralBg;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <BadgeUnlockModal
         visible={unlockQueue.length > 0}
         payload={unlockQueue[0]}
         onClose={advanceUnlock}
       />
+
+      {/* Header — outside ScrollView so it never scrolls under status bar */}
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={styles.chev}>‹</Text>
+        </TouchableOpacity>
+        <Text style={[styles.topTitle, HAND_500 && { fontFamily: HAND_500 }]}>new memory</Text>
+        <View style={styles.headerBtn} />
+      </View>
+
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={{ fontSize: 18 }}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.topTitle}>New memory</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScrollView
+          contentContainerStyle={{ padding: 22, paddingBottom: 60 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Top-edge decorative doodles */}
+          <Sparkle    size={14} color={COLORS.coral}     opacity={0.55} style={{ right: 8,  top: -8 }} />
+          <Star       size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ left: -4, top: 4 }} />
 
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-          {/* Activity picker */}
-          <Text style={styles.label}>What'd y'all do?</Text>
-          <TouchableOpacity onPress={() => setPickerOpen(true)} style={styles.activityPicker}>
-            {activity ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-                <View style={[styles.actEmojiBox, { backgroundColor: TIER[activity.tier].bg }]}>
-                  <Text style={{ fontSize: 24 }}>{activity.emoji}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.actName}>{activity.name}</Text>
-                  <Text style={[styles.actTier, { color: TIER[activity.tier].text }]}>{TIER[activity.tier].label} tier</Text>
-                </View>
+          {/* ─── Pre-filled activity card (only if navigated from ActivityDetail) ─── */}
+          {activity && (
+            <View style={styles.prefillCard}>
+              <WashiTape color="coral" width={56} height={12} rotation={-6} opacity={0.85} style={{ top: -4, left: 14 }} />
+              <View style={[styles.prefillEmojiBox, { backgroundColor: tierBg }]}>
+                <Text style={{ fontSize: 22 }}>{activity.emoji}</Text>
               </View>
-            ) : (
-              <Text style={styles.pickerPlaceholder}>Tap to pick an activity...</Text>
-            )}
-            <Text style={{ color: '#aaa', fontSize: 18 }}>›</Text>
-          </TouchableOpacity>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.prefillName} numberOfLines={1}>{activity.name}</Text>
+                <Text style={styles.prefillSub}>capturing this lime ✨</Text>
+              </View>
+            </View>
+          )}
 
-          {/* Photo */}
-          <Text style={styles.label}>Drop a photo</Text>
-          <View style={{ position: 'relative' }}>
-            <TouchableOpacity onPress={pickPhoto} style={styles.photoBox}>
-              {photo ? (
+          {/* ─── Photo ─── */}
+          <View style={{ position: 'relative', marginTop: activity ? 18 : 6 }}>
+            {photo ? (
+              <TouchableOpacity onPress={pickPhoto} style={styles.photoBox} activeOpacity={0.9}>
                 <Image source={{ uri: photo }} style={styles.photoPreview} />
-              ) : (
-                <View style={styles.photoEmpty}>
-                  <Text style={{ fontSize: 48, marginBottom: 8 }}>📷</Text>
-                  <Text style={{ color: '#888', fontWeight: '600' }}>Tap to pick from camera roll</Text>
-                  <Text style={{ color: '#bbb', fontSize: 11, marginTop: 4 }}>1 photo per memory</Text>
-                </View>
-              )}
-            </TouchableOpacity>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={pickPhoto} style={styles.photoPlaceholder} activeOpacity={0.9}>
+                <Text style={styles.photoPlaceholderEmoji}>📸</Text>
+                <Text style={[styles.photoPlaceholderTitle, HAND_500 && { fontFamily: HAND_500 }]}>add a photo</Text>
+                <Text style={styles.photoPlaceholderSub}>tap to pick or take one</Text>
+              </TouchableOpacity>
+            )}
             {photo && (
               <Pressable
                 onPress={() => setPhoto(null)}
@@ -188,126 +241,144 @@ export default function AddMemoryScreen({ navigation }) {
               </Pressable>
             )}
           </View>
-          {photo && (
-            <TouchableOpacity onPress={pickPhoto} style={styles.changePhoto}>
-              <Text style={{ color: '#666', fontSize: 12, fontWeight: '600' }}>Change photo</Text>
-            </TouchableOpacity>
-          )}
 
-          {/* Caption */}
-          <Text style={styles.label}>Caption</Text>
+          {/* ─── Caption ─── */}
+          <WashiLabel text="caption" color="coral" rotation={-3} hand500={HAND_500} />
           <TextInput
             value={caption}
             onChangeText={setCaption}
-            placeholder="Spill the tea…"
+            placeholder="what happened? any stories?"
             placeholderTextColor="#bbb"
             multiline
-            style={styles.caption}
+            style={styles.textField}
             maxLength={280}
           />
           <Text style={styles.charCount}>{caption.length}/280</Text>
 
-          {/* Rating */}
-          <Text style={styles.label}>How was it?</Text>
-          <View style={styles.ratingGrid}>
-            {RATINGS.map(r => {
-              const active = rating?.label === r.label;
+          {/* ─── Mood ─── */}
+          <WashiLabel text="mood" color="amber" rotation={2} hand500={HAND_500} />
+          <View style={styles.moodRow}>
+            {MOODS.map(m => {
+              const on = mood === m.id;
               return (
-                <TouchableOpacity
-                  key={r.label}
-                  onPress={() => setRating(r)}
-                  style={[styles.ratingBtn, { backgroundColor: active ? r.color : '#fff', borderColor: active ? r.textColor : COLORS.border, borderWidth: active ? 2 : 1 }]}
+                <Pressable
+                  key={m.id}
+                  onPress={() => setMood(prev => prev === m.id ? null : m.id)}
+                  style={({ pressed }) => [
+                    styles.moodTile,
+                    on && { backgroundColor: m.bg, borderColor: '#E8704F', borderWidth: 2 },
+                    pressed && { transform: [{ scale: 0.96 }] },
+                  ]}
                 >
-                  <Text style={{ fontSize: 24, marginBottom: 4 }}>{r.icon}</Text>
-                  <Text style={[styles.ratingLabel, { color: active ? r.textColor : '#666' }]}>{r.label}</Text>
-                </TouchableOpacity>
+                  {on && <Sparkle size={10} color={COLORS.amber} opacity={0.9} style={{ right: 6, top: 4 }} />}
+                  <Text style={styles.moodEmoji}>{m.emoji}</Text>
+                  <Text style={styles.moodLabel}>{m.label}</Text>
+                </Pressable>
               );
             })}
           </View>
 
-          {/* Save */}
-          <TouchableOpacity
-            onPress={save}
-            disabled={!canSave}
-            style={[styles.saveBtn, { backgroundColor: canSave ? accent : '#e0e0e0' }]}
-          >
-            {saving ? (
-              <ActivityIndicator color={accentText} />
-            ) : (
-              <Text style={[styles.saveBtnText, { color: canSave ? accentText : '#aaa' }]}>
-                {canSave ? '🍋 Post memory' : 'Fill in the bits above'}
-              </Text>
-            )}
-          </TouchableOpacity>
+          {/* ─── Location ─── */}
+          <WashiLabel text="location" color="mint" rotation={-2} hand500={HAND_500} />
+          <TextInput
+            value={location}
+            onChangeText={setLocation}
+            placeholder="where did this happen? (optional)"
+            placeholderTextColor="#bbb"
+            style={[styles.textField, { minHeight: 0, paddingVertical: 14 }]}
+          />
+
+          {/* ─── Hero save ─── */}
+          <View style={styles.saveWrap}>
+            <Pressable
+              onPress={save}
+              disabled={!canSave}
+              style={({ pressed }) => [
+                styles.saveBtn,
+                !canSave && { opacity: 0.45 },
+                pressed && { transform: [{ rotate: '-2deg' }, { scale: 0.97 }] },
+              ]}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveBtnText}>save this memory ✨</Text>
+              )}
+            </Pressable>
+            <Sparkle size={18} color={COLORS.coral} opacity={0.55} style={{ right: 18, top: 6 }} />
+          </View>
 
           {activity && !myBadges.includes(activity.id) && (
             <Text style={styles.badgeHint}>
-              ✨ You'll also earn the {activity.badge} badge
+              ✨ You'll also earn the {activity.badge || '🏅'} badge
             </Text>
           )}
-        </ScrollView>
 
-        {/* Activity picker modal */}
-        <Modal visible={pickerOpen} animationType="slide" onRequestClose={() => setPickerOpen(false)}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setPickerOpen(false)}>
-                <Text style={{ fontSize: 14, color: '#888', fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Pick activity</Text>
-              <View style={{ width: 50 }} />
-            </View>
-            <View style={{ paddingHorizontal: 20, marginBottom: 10 }}>
-              <TextInput
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Search..."
-                placeholderTextColor="#bbb"
-                style={styles.modalSearch}
-              />
-            </View>
-            <FlatList
-              data={filteredActivities}
-              keyExtractor={(i) => String(i.id)}
-              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 30 }}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() => { setActivity(item); setPickerOpen(false); setSearch(''); }}
-                  style={styles.modalRow}
-                >
-                  <View style={[styles.actEmojiBox, { backgroundColor: TIER[item.tier].bg }]}>
-                    <Text style={{ fontSize: 22 }}>{item.emoji}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.actName}>{item.name}</Text>
-                    <Text style={[styles.actTier, { color: TIER[item.tier].text }]}>{TIER[item.tier].label}</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
-          </SafeAreaView>
-        </Modal>
+          {/* Bottom-edge decorative doodles */}
+          <View pointerEvents="none" style={styles.bottomAccents}>
+            <Star       size={12} color={COLORS.amber}     opacity={0.55} style={{ left: 28,  top: 0 }} />
+            <CurvedArrow size={32} color={COLORS.coral}    opacity={0.45} style={{ right: 28, top: 8, transform: [{ rotate: '110deg' }] }} />
+            <Sparkle    size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ left: '52%', top: 22 }} />
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+// ─── Reusable washi-tape field label ─────────────────────
+function WashiLabel({ text, color, rotation, hand500 }) {
+  return (
+    <View style={labelStyles.wrap}>
+      <WashiTape color={color} width={92} height={14} rotation={rotation} opacity={0.85} style={{ top: 8, left: -6 }} />
+      <Text style={[labelStyles.text, hand500 && { fontFamily: hand500 }]}>{text}</Text>
+    </View>
+  );
+}
+
+const labelStyles = StyleSheet.create({
+  wrap: { position: 'relative', alignSelf: 'flex-start', marginTop: 24, marginBottom: 10 },
+  text: { fontSize: 20, color: COLORS.dark, letterSpacing: -0.3, lineHeight: 24 },
+});
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 18, paddingBottom: 8 },
-  backBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  topTitle: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
+  safe: { flex: 1, backgroundColor: COLORS.cream },
 
-  label: { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12, marginTop: 22 },
+  // Header (matches Settings/ActivityDetail pattern)
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chev: { fontSize: 28, color: COLORS.dark, fontWeight: '500', lineHeight: 28 },
+  topTitle: { fontSize: 26, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 32, textTransform: 'lowercase' },
 
-  activityPicker: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', gap: 12 },
-  pickerPlaceholder: { color: '#bbb', fontSize: 14, flex: 1 },
-  actEmojiBox: { width: 52, height: 52, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  actName: { fontSize: 15, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  actTier: { fontSize: 11, fontWeight: '600', marginTop: 3 },
+  // Pre-filled activity card (locked, from ActivityDetail)
+  prefillCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 14, borderWidth: 1, borderColor: '#EBE2D0',
+    padding: 12,
+    position: 'relative',
+    marginBottom: 4,
+    transform: [{ rotate: '-1deg' }],
+  },
+  prefillEmojiBox: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  prefillName: { fontSize: 14, fontWeight: '500', color: COLORS.dark, letterSpacing: -0.2, textTransform: 'lowercase' },
+  prefillSub: { fontSize: 11, color: '#888', fontStyle: 'italic', marginTop: 3 },
 
-  photoBox: { borderRadius: 22, overflow: 'hidden', backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  photoEmpty: { aspectRatio: 4 / 5, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.12)', borderRadius: 20, margin: 4 },
+  // Photo (no-photo placeholder)
+  photoPlaceholder: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    borderWidth: 2, borderStyle: 'dashed', borderColor: '#EBE2D0',
+    height: 240,
+    alignItems: 'center', justifyContent: 'center',
+    transform: [{ rotate: '-1deg' }],
+  },
+  photoPlaceholderEmoji: { fontSize: 56, marginBottom: 10 },
+  photoPlaceholderTitle: { fontSize: 20, color: COLORS.dark, letterSpacing: -0.3, lineHeight: 24 },
+  photoPlaceholderSub: { fontSize: 12, color: '#888', marginTop: 4, textTransform: 'lowercase' },
+
+  // Photo (selected preview)
+  photoBox: { borderRadius: 22, overflow: 'hidden', backgroundColor: '#fff', borderWidth: 1, borderColor: '#EBE2D0' },
   photoPreview: { width: '100%', aspectRatio: 4 / 5 },
   photoX: {
     position: 'absolute', top: 8, right: 8,
@@ -318,21 +389,47 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.12, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 3,
   },
   photoXIcon: { fontSize: 16, color: '#555', fontWeight: '600', lineHeight: 18 },
-  changePhoto: { alignSelf: 'center', marginTop: 10, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
 
-  caption: { backgroundColor: '#fff', borderRadius: 16, padding: 16, fontSize: 15, color: COLORS.dark, minHeight: 110, textAlignVertical: 'top', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', lineHeight: 22 },
+  // Text field (caption + location)
+  textField: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1, borderColor: '#EBE2D0',
+    padding: 14,
+    fontSize: 14, color: COLORS.dark,
+    minHeight: 96, textAlignVertical: 'top',
+    lineHeight: 21,
+  },
   charCount: { fontSize: 10, color: '#bbb', textAlign: 'right', marginTop: 6 },
 
-  ratingGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  ratingBtn: { width: '47%', padding: 18, borderRadius: 16, alignItems: 'center' },
-  ratingLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
+  // Mood tiles
+  moodRow: { flexDirection: 'row', gap: 8 },
+  moodTile: {
+    flex: 1,
+    height: 80,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1, borderColor: '#EBE2D0',
+    padding: 12,
+    alignItems: 'center', justifyContent: 'center',
+    position: 'relative',
+  },
+  moodEmoji: { fontSize: 28, marginBottom: 4 },
+  moodLabel: { fontSize: 11, fontWeight: '500', color: COLORS.dark, textTransform: 'lowercase', textAlign: 'center' },
 
-  saveBtn: { marginTop: 32, padding: 17, borderRadius: 14, alignItems: 'center' },
-  saveBtnText: { fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
+  // Hero save
+  saveWrap: { marginTop: 28, position: 'relative' },
+  saveBtn: {
+    backgroundColor: '#E8704F',
+    height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    transform: [{ rotate: '-2deg' }],
+    shadowColor: '#000', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 4,
+  },
+  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+
   badgeHint: { textAlign: 'center', color: '#888', fontSize: 12, marginTop: 14 },
 
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 22, paddingBottom: 12 },
-  modalTitle: { fontSize: 16, fontWeight: '700', color: COLORS.dark },
-  modalSearch: { backgroundColor: '#fff', padding: 14, borderRadius: 14, fontSize: 14, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', color: COLORS.dark },
-  modalRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', padding: 14, borderRadius: 16, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
+  // Bottom decorative
+  bottomAccents: { height: 50, marginTop: 18, position: 'relative' },
 });
