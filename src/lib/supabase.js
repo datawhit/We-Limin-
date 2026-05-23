@@ -1,6 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { decode } from 'base64-arraybuffer';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -274,20 +275,36 @@ export async function getAcceptedInvites(profileId) {
 }
 
 // ── PHOTO UPLOAD ──────────────────────────────────────────
-export async function uploadPhoto(uri, profileId, folder = 'memories') {
-  const ext = uri.split('.').pop() || 'jpg';
+// Takes a picked-image asset (NOT a URI). Required: { base64, mimeType }.
+// In React Native, fetch(file://...).blob() produces a malformed Blob that
+// supabase-js uploads as near-empty bytes; decoding base64 → ArrayBuffer
+// avoids that path entirely.
+export async function uploadPhoto({ base64, mimeType, fileName } = {}, profileId, folder = 'memories') {
+  if (!base64) throw new Error('uploadPhoto: missing base64 data');
+  const arrayBuffer = decode(base64);
+  const ext = (mimeType?.split('/')[1] || 'jpg').toLowerCase();
+  const contentType = mimeType || 'image/jpeg';
   const path = `${folder}/${profileId}/${Date.now()}.${ext}`;
-  const response = await fetch(uri);
-  const blob = await response.blob();
+
   const { data: { session } } = await supabase.auth.getSession();
   console.log('[upload] auth session exists:', !!session);
   console.log('[upload] auth user id:', session?.user?.id);
   console.log('[upload] upload path:', path);
   console.log('[upload] bucket name being used:', 'Lime-Photos');
-  const { error } = await supabase.storage.from('Lime-Photos').upload(path, blob, {
-    contentType: `image/${ext}`, upsert: true,
+  console.log('[upload data check]', {
+    hasBase64: !!base64,
+    base64Length: base64?.length,
+    arrayBufferSize: arrayBuffer?.byteLength,
+    contentType,
   });
-  if (error) throw error;
+
+  const { error } = await supabase.storage.from('Lime-Photos').upload(path, arrayBuffer, {
+    contentType, upsert: false,
+  });
+  if (error) {
+    console.warn('[upload] storage error:', error);
+    throw error;
+  }
   const { data } = supabase.storage.from('Lime-Photos').getPublicUrl(path);
   return data.publicUrl;
 }

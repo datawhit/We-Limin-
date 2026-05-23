@@ -8,7 +8,8 @@
       "Bash(awk -v key=EXPO_PUBLIC_ANTHROPIC_KEY 'BEGIN{found=0} $0 ~ \"^\"key\"=\" { *)",
       "Bash(echo \"---exit $?\")",
       "Bash(grep -n \"Badge button\\\\|earn \\\\${activity.badge}\\\\|Quick search row\\\\|AI Suggestions\" /Users/whitneyalleng/Downloads/lime-native/src/screens/ActivityDetailScreen.js)",
-      "Bash(node -e \"console.log\\(require\\('./package.json'\\).dependencies['@expo-google-fonts/caveat'], require\\('./package.json'\\).dependencies['expo-font']\\)\")"
+      "Bash(node -e \"console.log\\(require\\('./package.json'\\).dependencies['@expo-google-fonts/caveat'], require\\('./package.json'\\).dependencies['expo-font']\\)\")",
+      "Bash(npm install *)"
     ]
   }
 }

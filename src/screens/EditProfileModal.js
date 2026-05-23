@@ -22,6 +22,7 @@ export default function EditProfileModal({ visible, onClose, initialFocus = 'pro
   const [name, setName] = useState(profile?.name || '');
   const [expression, setExpression] = useState(profile?.expression || 'nonbinary');
   const [photoUri, setPhotoUri] = useState(profile?.photo_url || null);
+  const [pickedAsset, setPickedAsset] = useState(null);
   const [accent, setAccent] = useState(
     ACCENT_COLORS.find(a => a.value === profile?.accent_color) || ACCENT_COLORS[0]
   );
@@ -32,6 +33,7 @@ export default function EditProfileModal({ visible, onClose, initialFocus = 'pro
     setName(profile.name || '');
     setExpression(profile.expression || 'nonbinary');
     setPhotoUri(profile.photo_url || null);
+    setPickedAsset(null);
     setAccent(ACCENT_COLORS.find(a => a.value === profile.accent_color) || ACCENT_COLORS[0]);
   }, [visible, profile]);
 
@@ -46,9 +48,12 @@ export default function EditProfileModal({ visible, onClose, initialFocus = 'pro
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.85,
+      base64: true,
     });
     if (!result.canceled && result.assets?.[0]) {
-      setPhotoUri(result.assets[0].uri);
+      const a = result.assets[0];
+      setPhotoUri(a.uri);
+      setPickedAsset({ base64: a.base64, mimeType: a.mimeType });
     }
   };
 
@@ -64,6 +69,7 @@ export default function EditProfileModal({ visible, onClose, initialFocus = 'pro
         expression,
         accentColor: accent,
         photoUri,
+        photoAsset: pickedAsset,
       });
       onClose();
     } catch (e) {

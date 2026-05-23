@@ -82,9 +82,11 @@ export default function AddMemoryScreen({ navigation, route }) {
       allowsEditing: true,
       aspect: [4, 5],
       quality: 0.8,
+      base64: true,
     });
     if (!result.canceled && result.assets?.[0]) {
-      setPhoto(result.assets[0].uri);
+      const a = result.assets[0];
+      setPhoto({ uri: a.uri, base64: a.base64, mimeType: a.mimeType });
     }
   };
 
@@ -97,7 +99,11 @@ export default function AddMemoryScreen({ navigation, route }) {
     if (!canSave) return;
     setSaving(true);
     try {
-      const photoUrl = await uploadPhoto(photo, profile.id);
+      const photoUrl = await uploadPhoto(
+        { base64: photo.base64, mimeType: photo.mimeType, fileName: 'memory' },
+        profile.id,
+        'memories'
+      );
       await addMemory({
         profile_id: profile.id,
         activity_id: activity?.id || null,
@@ -219,7 +225,7 @@ export default function AddMemoryScreen({ navigation, route }) {
           <View style={{ position: 'relative', marginTop: activity ? 18 : 6 }}>
             {photo ? (
               <TouchableOpacity onPress={pickPhoto} style={styles.photoBox} activeOpacity={0.9}>
-                <Image source={{ uri: photo }} style={styles.photoPreview} />
+                <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={pickPhoto} style={styles.photoPlaceholder} activeOpacity={0.9}>

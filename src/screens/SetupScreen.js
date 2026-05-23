@@ -20,6 +20,7 @@ export default function SetupScreen({ onComplete }) {
   const [accent, setAccent] = useState(ACCENT_COLORS[0]); // coral
   const [expression, setExpression] = useState('nonbinary');
   const [photoUri, setPhotoUri] = useState(null);
+  const [pickedAsset, setPickedAsset] = useState(null);
 
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -32,9 +33,12 @@ export default function SetupScreen({ onComplete }) {
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.85,
+      base64: true,
     });
     if (!result.canceled && result.assets?.[0]) {
-      setPhotoUri(result.assets[0].uri);
+      const a = result.assets[0];
+      setPhotoUri(a.uri);
+      setPickedAsset({ base64: a.base64, mimeType: a.mimeType });
     }
   };
 
@@ -184,7 +188,7 @@ export default function SetupScreen({ onComplete }) {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => onComplete({ name, accentColor: accent, photoUri, expression })}
+              onPress={() => onComplete({ name, accentColor: accent, photoUri, photoAsset: pickedAsset, expression })}
               style={[styles.btn, { backgroundColor: accent.value }]}>
               <Text style={[styles.btnText, { color: accent.text }]}>Leh we lime 🍋</Text>
             </TouchableOpacity>

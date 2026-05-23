@@ -153,7 +153,7 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleSetupComplete = async ({ name, accentColor, photoUri, expression }) => {
+  const handleSetupComplete = async ({ name, accentColor, photoUri, photoAsset, expression }) => {
     let id = await AsyncStorage.getItem(USER_ID_KEY);
     if (!id) {
       id = `user_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -161,12 +161,12 @@ export default function App() {
     }
 
     let photoUrl = null;
-    if (photoUri && supabaseConfigured) {
+    if (photoAsset?.base64 && supabaseConfigured) {
       try {
-        photoUrl = await uploadPhoto(photoUri, id, 'profiles');
+        photoUrl = await uploadPhoto(photoAsset, id, 'profiles');
       } catch (e) {
         console.warn('[lime] profile photo upload failed:', e?.message || e);
-        photoUrl = photoUri;
+        photoUrl = photoUri || null;
       }
     } else if (photoUri) {
       photoUrl = photoUri;
@@ -200,16 +200,16 @@ export default function App() {
 
   const updateProfile = async (updates) => {
     let nextPhotoUrl = profile.photo_url;
-    if (updates.photoUri !== undefined) {
-      if (updates.photoUri === null) {
-        nextPhotoUrl = null;
-      } else if (updates.photoUri !== profile.photo_url) {
-        nextPhotoUrl = updates.photoUri;
-        if (supabaseConfigured) {
-          try { nextPhotoUrl = await uploadPhoto(updates.photoUri, profile.id, 'profiles'); }
-          catch (e) { console.warn('[lime] profile photo upload failed:', e?.message || e); }
-        }
+    if (updates.photoAsset?.base64) {
+      // A new photo was picked — upload it.
+      nextPhotoUrl = updates.photoUri || profile.photo_url;
+      if (supabaseConfigured) {
+        try { nextPhotoUrl = await uploadPhoto(updates.photoAsset, profile.id, 'profiles'); }
+        catch (e) { console.warn('[lime] profile photo upload failed:', e?.message || e); }
       }
+    } else if (updates.photoUri === null) {
+      // Explicit clear.
+      nextPhotoUrl = null;
     }
 
     const next = {
