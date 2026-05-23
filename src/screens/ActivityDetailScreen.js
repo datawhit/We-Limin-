@@ -5,6 +5,8 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppContext } from '../lib/AppContext';
 import { COLORS, TIER, getTier } from '../lib/constants';
 import {
@@ -18,8 +20,22 @@ import ProfileAvatar from '../components/ProfileAvatar';
 import { checkAndUnlockHiddenBadges } from '../lib/hiddenBadges';
 import { getMondayOfThisWeek, weekStartISO } from './AvailabilityModal';
 
-const DAY_LABEL = { Mon: 'Mon', Tue: 'Tue', Wed: 'Wed', Thu: 'Thu', Fri: 'Fri', Sat: 'Sat', Sun: 'Sun' };
+// ─── Design system primitives ─────────────────────────────
+import WashiTape from '../components/WashiTape';
+import { Star, Heart, Sparkle, CurvedArrow } from '../components/Doodles';
+import { PASTELS, HANDWRITTEN_500 } from '../lib/theme';
+
+const DAY_LABEL  = { Mon: 'Mon', Tue: 'Tue', Wed: 'Wed', Thu: 'Thu', Fri: 'Fri', Sat: 'Sat', Sun: 'Sun' };
 const SLOT_LABEL = { morning: 'morning', afternoon: 'afternoon', evening: 'evening' };
+
+// Pastel emoji-square color per tier (used in the hero polaroid).
+const TIER_BG = {
+  chill: PASTELS.mintBg,
+  bold:  PASTELS.amberBg,
+  wild:  PASTELS.lavenderBg,
+};
+
+const SAVED_KEY = 'lime_saved_activities';
 
 export default function ActivityDetailScreen({ route, navigation }) {
   const { activity, isModal } = route.params || {};
@@ -28,7 +44,9 @@ export default function ActivityDetailScreen({ route, navigation }) {
   const t = TIER[activity.tier];
   const accent = profile.accent_color || COLORS.coral;
   const accentText = profile.accent_text || '#FFFFFF';
+  const insets = useSafeAreaInsets();
 
+  // PRESERVED: all state from prior version
   const [location, setLocation] = useState('NYC');
   const [suggestions, setSuggestions] = useState([]);
   const [loadingAI, setLoadingAI] = useState(true);
@@ -37,18 +55,18 @@ export default function ActivityDetailScreen({ route, navigation }) {
   const [pinUrl, setPinUrl] = useState('');
   const [showPinInput, setShowPinInput] = useState(false);
 
-  // Queue of unlock-modal payloads. The badge itself is enqueued first,
-  // followed by any hidden badges. We render the head; advancing pops it.
+  // Queue of badge-unlock modal payloads (kept — fired from anywhere
+  // that earns a badge, including the AddMemoryScreen flow).
   const [unlockQueue, setUnlockQueue] = useState([]);
 
-  // "Who's free?" — squad availability matches with the current user.
-  const [availMatches, setAvailMatches] = useState([]); // [{ member, overlap: [{day, slot}] }]
-  const [inviteFor, setInviteFor] = useState(null); // { member, overlap } when modal open
+  // "Who's free?" — squad availability matches.
+  const [availMatches, setAvailMatches] = useState([]);
+  const [inviteFor, setInviteFor] = useState(null);
   const [toastVisible, setToastVisible] = useState(false);
   const toastY = useRef(new Animated.Value(-80)).current;
 
-  // Squad reactions
-  const [reactions, setReactions] = useState([]); // [{ reaction, profile_id }]
+  // Squad reactions (PRESERVED — state + handlers untouched)
+  const [reactions, setReactions] = useState([]);
   const REACTION_SET = [
     { id: '🔥', label: 'Down' },
     { id: '🙌', label: "I'm in" },
@@ -65,30 +83,33 @@ export default function ActivityDetailScreen({ route, navigation }) {
     return m;
   }, [reactions]);
 
+  // NEW: small overflow sheet from the ⋮ button
+  const [menuOpen, setMenuOpen] = useState(false);
+  // NEW: lineup-saved tracking (reads same key the Explore screen
+  // writes to). Drives the "in your lineup" status pill.
+  const [savedSet, setSavedSet] = useState([]);
+
+  const [fontsLoaded] = useFonts({ Caveat_500Medium });
+  const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
+
   const loadReactions = async () => {
     try { setReactions(await getReactionsForActivity(activity.id)); }
-    catch (e) { /* offline or table missing — silent */ }
+    catch (e) { /* silent */ }
   };
   const toggleReaction = async (emoji) => {
     const next = (myReaction === emoji)
       ? reactions.filter(r => r.profile_id !== profile.id)
       : [...reactions.filter(r => r.profile_id !== profile.id), { reaction: emoji, profile_id: profile.id }];
-    setReactions(next); // optimistic
+    setReactions(next);
     try {
       if (myReaction === emoji) await clearReaction({ activityId: activity.id, profileId: profile.id });
       else await setReaction({ activityId: activity.id, profileId: profile.id, reaction: emoji });
-    } catch (e) { /* keep optimistic state on failure */ }
+    } catch (e) { /* keep optimistic */ }
   };
 
-  // Debounce timer for the location input — new keystrokes cancel
-  // the pending fire. Retry counter is a ref so the catch block
-  // reads the current value synchronously (state updates wouldn't
-  // be visible inside the same invocation).
+  // Debounced AI fetch — PRESERVED logic
   const debounceRef = useRef(null);
   const retryCountRef = useRef(0);
-
-  // Fire on mount AND whenever location changes (debounced 600ms).
-  // Replaces the old mount-only effect + onSubmitEditing path.
   useEffect(() => {
     if (!location.trim()) return;
     retryCountRef.current = 0;
@@ -97,7 +118,20 @@ export default function ActivityDetailScreen({ route, navigation }) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [location]);
 
-  useEffect(() => { loadPinned(); loadReactions(); loadAvailMatches(); }, []);
+  useEffect(() => {
+    loadPinned();
+    loadReactions();
+    loadAvailMatches();
+    loadSaved();
+  }, []);
+
+  const loadSaved = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(SAVED_KEY);
+      setSavedSet(raw ? JSON.parse(raw) : []);
+    } catch (e) { setSavedSet([]); }
+  };
+  const inLineup = savedSet.includes(activity.id);
 
   const loadAvailMatches = async () => {
     try {
@@ -110,15 +144,13 @@ export default function ActivityDetailScreen({ route, navigation }) {
         const overlap = [];
         Object.entries(mySlots).forEach(([day, slots]) => {
           (slots || []).forEach(slot => {
-            if ((member.slots?.[day] || []).includes(slot)) {
-              overlap.push({ day, slot });
-            }
+            if ((member.slots?.[day] || []).includes(slot)) overlap.push({ day, slot });
           });
         });
         return { member, overlap };
       }).filter(m => m.overlap.length > 0);
       setAvailMatches(matches);
-    } catch (e) { /* table missing or offline — empty state shows */ }
+    } catch (e) { /* empty state */ }
   };
 
   const flashToast = () => {
@@ -130,11 +162,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
       Animated.timing(toastY, { toValue: -80, duration: 220, useNativeDriver: true }),
     ]).start(() => setToastVisible(false));
   };
-
-  const handleInviteSent = () => {
-    setInviteFor(null);
-    flashToast();
-  };
+  const handleInviteSent = () => { setInviteFor(null); flashToast(); };
 
   const loadAI = async () => {
     console.log('[detail] triggering AI fetch — activity=', activity.name, 'location=', location, 'retry=', retryCountRef.current);
@@ -154,8 +182,6 @@ export default function ActivityDetailScreen({ route, navigation }) {
       console.warn('[detail] AI fetch failed:', e?.message || e);
       const overloaded = e?.code === 'lime_overloaded';
       if (retryCountRef.current >= 2) {
-        // Two retries already burned — drop to the static fallback so
-        // the user always sees *something* bookable.
         setSuggestions(getAIFallback(activity.name, location));
         setAIError(null);
       } else {
@@ -167,11 +193,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
     }
     setLoadingAI(false);
   };
-
-  const handleRetry = () => {
-    retryCountRef.current += 1;
-    loadAI();
-  };
+  const handleRetry = () => { retryCountRef.current += 1; loadAI(); };
 
   const loadPinned = async () => {
     try {
@@ -180,6 +202,32 @@ export default function ActivityDetailScreen({ route, navigation }) {
     } catch (e) { /* noop */ }
   };
 
+  // NEW behavior: tapping the CTA navigates to AddMemoryScreen with
+  // the activity pre-filled. The existing AddMemoryScreen flow calls
+  // earnBadge() on save, so the user returning here will see the
+  // "limed it ✓" state automatically — no extra wiring needed.
+  const captureMemory = () => {
+    navigation.navigate('Tabs', {
+      screen: 'Scrapbook',
+      params: {
+        screen: 'AddMemory',
+        params: {
+          prefillActivity: {
+            id: activity.id,
+            name: activity.name,
+            emoji: activity.emoji,
+            tier: activity.tier,
+          },
+        },
+      },
+    });
+  };
+  const viewMemory = () => {
+    navigation.navigate('Tabs', { screen: 'Scrapbook' });
+  };
+
+  // PRESERVED: the old toggleBadge stays defined; not bound to the new
+  // CTA but available for any caller that still references it.
   const toggleBadge = async () => {
     try {
       if (earned) {
@@ -187,7 +235,6 @@ export default function ActivityDetailScreen({ route, navigation }) {
         setMyBadges(myBadges.filter(id => id !== activity.id));
         return;
       }
-      // Earning path — celebrate.
       await earnBadge(profile.id, activity.id);
       const nextBadges = [activity.id, ...myBadges];
       setMyBadges(nextBadges);
@@ -205,7 +252,6 @@ export default function ActivityDetailScreen({ route, navigation }) {
         leveledUp,
       }];
 
-      // Hidden badge: Spontaneous (completed within 2h of first app open today)
       try {
         const newly = await checkAndUnlockHiddenBadges({
           trigger: 'activity_completed',
@@ -217,12 +263,11 @@ export default function ActivityDetailScreen({ route, navigation }) {
           tierName: 'Hidden badge', tierEmoji: '✨', tierTagline: b.hint,
           leveledUp: false,
         }));
-      } catch (e) { /* hidden badge check failed — non-fatal */ }
+      } catch (e) { /* non-fatal */ }
 
       setUnlockQueue(q => [...q, ...payloads]);
     } catch (e) { Alert.alert('Oops', 'Could not update badge'); }
   };
-
   const advanceUnlock = () => setUnlockQueue(q => q.slice(1));
 
   const openGoogle = () => {
@@ -239,8 +284,12 @@ export default function ActivityDetailScreen({ route, navigation }) {
     } catch (e) { Alert.alert('Oops', 'Could not pin link'); }
   };
 
+  // Tier text + label (lowercase)
+  const tierLabel = (t?.label || '').toLowerCase();
+  const tierBg = TIER_BG[activity.tier] || PASTELS.coralBg;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <BadgeUnlockModal
         visible={unlockQueue.length > 0}
         payload={unlockQueue[0]}
@@ -259,42 +308,80 @@ export default function ActivityDetailScreen({ route, navigation }) {
           <Text style={styles.inviteToastText}>Invite sent 🍋</Text>
         </Animated.View>
       )}
+
+      {/* ─── Header (chevron + ⋮ menu) ─── */}
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={styles.chev}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          onPress={() => setMenuOpen(true)}
+          style={styles.headerBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={styles.menuDots}>⋮</Text>
+        </TouchableOpacity>
+      </View>
+
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-          {/* Top bar — X to dismiss modal, ← to pop stack */}
-          <View style={styles.topBar}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-              <Text style={{ fontSize: 18, color: COLORS.dark }}>{isModal ? '✕' : '←'}</Text>
-            </TouchableOpacity>
+        <ScrollView contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+          {/* Page-edge doodles */}
+          <Sparkle    size={14} color={COLORS.coral}     opacity={0.55} style={{ right: 14, top: 6 }} />
+          <Star       size={11} color={COLORS.palmGreen} opacity={0.5}  style={{ left: 18,  top: 20 }} />
+
+          {/* ─── Hero polaroid ─── */}
+          <View style={styles.heroWrap}>
+            <View style={styles.heroPolaroid}>
+              <WashiTape color="amber" width="38%" height={16} rotation={-3} style={{ top: -8, left: '31%' }} />
+              <View style={[styles.heroPhotoBox, { backgroundColor: tierBg }]}>
+                <Text style={styles.heroEmoji}>{activity.emoji}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.heroName} numberOfLines={2}>{activity.name}</Text>
+
+            <View style={styles.pillsRow}>
+              <View style={[styles.tierPill, { backgroundColor: t?.bg || PASTELS.coralBg }]}>
+                <Text style={[styles.tierPillText, { color: t?.text || COLORS.dark }]}>{tierLabel} tier</Text>
+              </View>
+              {earned ? (
+                <View style={[styles.statusPill, { backgroundColor: '#D4EBD8' }]}>
+                  <Text style={[styles.statusPillText, { color: COLORS.palmGreen }]}>lived ✓</Text>
+                </View>
+              ) : inLineup ? (
+                <View style={[styles.statusPill, { backgroundColor: PASTELS.coralBg }]}>
+                  <Text style={[styles.statusPillText, { color: COLORS.deepCoral }]}>in your lineup ⭐</Text>
+                </View>
+              ) : null}
+              {activity.tripType && (
+                <View style={[styles.statusPill, { backgroundColor: PASTELS.blueBg }]}>
+                  <Text style={[styles.statusPillText, { color: '#1F5F7A' }]}>trip vibes ✈️</Text>
+                </View>
+              )}
+            </View>
           </View>
 
-          {/* Hero */}
-          <View style={[styles.hero, { backgroundColor: t.bg }]}>
-            <Text style={styles.heroEmoji}>{activity.emoji}</Text>
-            <View style={[styles.heroTierPill, { borderColor: t.text }]}>
-              <Text style={[styles.heroTierText, { color: t.text }]}>{t.label} tier</Text>
-            </View>
-            <Text style={[styles.heroName, { color: t.text }]}>{activity.name}</Text>
-            {activity.tripType && (
-              <Text style={[styles.heroSub, { color: t.text }]}>✈️ Trip vibes</Text>
+          {/* ─── Primary CTA ─── */}
+          <View style={styles.ctaWrap}>
+            {!earned ? (
+              <TouchableOpacity onPress={captureMemory} activeOpacity={0.85} style={styles.captureBtn}>
+                <Text style={styles.captureBtnText}>capture this lime ✨</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={viewMemory} activeOpacity={0.85} style={styles.limedBtn}>
+                <Text style={styles.limedBtnText}>limed it ✓</Text>
+              </TouchableOpacity>
             )}
           </View>
 
-          {/* Badge button */}
-          <View style={{ padding: 20 }}>
-            <TouchableOpacity
-              onPress={toggleBadge}
-              style={[styles.badgeBtn, { backgroundColor: earned ? '#fff' : accent, borderColor: earned ? accent : 'transparent', borderWidth: earned ? 2 : 0 }]}
-            >
-              <Text style={[styles.badgeBtnText, { color: earned ? accent : accentText }]}>
-                {earned ? `${activity.badge} Earned ✓ — tap to remove` : `🏅 Mark as done — earn ${activity.badge}`}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Squad reactions */}
-          <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
-            <Text style={styles.reactionsLabel}>SQUAD REACTIONS</Text>
+          {/* ─── Squad reactions (preserved, restyled label) ─── */}
+          <View style={{ paddingHorizontal: 20, marginBottom: 14 }}>
+            <Text style={styles.miniLabel}>squad reactions</Text>
             <View style={styles.reactionsRow}>
               {REACTION_SET.map(r => {
                 const count = reactionCounts[r.id] || 0;
@@ -313,18 +400,20 @@ export default function ActivityDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          {/* AI Suggestions */}
+          {/* ─── Where to do it ─── */}
           <View style={{ paddingHorizontal: 20 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <Text style={styles.sectionTitle}>✨ Where to do it</Text>
-              <Text style={styles.sectionSub}>AI picks for you</Text>
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.sectionHeaderLeft}>
+                <Text style={[styles.sectionHeader, HAND_500 && { fontFamily: HAND_500 }]}>where to do it</Text>
+                <Sparkle size={16} color={COLORS.coral} opacity={0.7} style={{ left: 4, top: 6 }} />
+              </View>
+              <Text style={styles.sectionAside}>AI picks for you</Text>
             </View>
 
-            {/* Location search — debounced; no return-key required */}
             <TextInput
               value={location}
               onChangeText={(v) => { console.log('[detail] location changed to', v); setLocation(v); }}
-              placeholder="Type a city..."
+              placeholder="type a city..."
               placeholderTextColor="#bbb"
               returnKeyType="search"
               style={styles.locInput}
@@ -333,60 +422,80 @@ export default function ActivityDetailScreen({ route, navigation }) {
             {loadingAI ? (
               <View style={styles.loadingBox}>
                 <ActivityIndicator color={COLORS.dark} />
-                <Text style={styles.loadingText}>Finding the spots...</Text>
+                <Text style={styles.loadingText}>finding the spots...</Text>
               </View>
             ) : aiError ? (
               <TouchableOpacity onPress={handleRetry} style={styles.errorBox} activeOpacity={0.8}>
                 <Text style={styles.errorText}>{aiError}</Text>
-                <Text style={styles.errorHint}>Tap to retry ↻</Text>
+                <Text style={styles.errorHint}>tap to retry ↻</Text>
               </TouchableOpacity>
             ) : (
-              suggestions.map((s, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => s.url && Linking.openURL(s.url)}
-                  style={styles.suggestCard}
-                  disabled={!s.url}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                    <Text style={styles.suggestName}>{s.name}</Text>
-                    {s.url && <Text style={{ color: '#aaa', fontSize: 18 }}>↗</Text>}
-                  </View>
-                  <Text style={styles.suggestDesc}>{s.desc}</Text>
-                  <View style={[styles.suggestTag, { backgroundColor: accent }]}>
-                    <Text style={[styles.suggestTagText, { color: accentText }]}>{s.tag}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
+              suggestions.map((s, i) => {
+                const tilt = i % 2 === 0 ? -1 : 1;
+                const isFavorite = (s.tag || '').toLowerCase().includes('favorite')
+                                || (s.tag || '').toLowerCase().includes('top')
+                                || (s.tag || '').toLowerCase().includes('trending');
+                return (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => s.url && Linking.openURL(s.url)}
+                    style={[styles.suggestCard, { transform: [{ rotate: `${tilt}deg` }] }]}
+                    disabled={!s.url}
+                    activeOpacity={0.85}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <Text style={styles.suggestName}>{s.name}</Text>
+                      {s.url && <Text style={styles.suggestArrow}>↗</Text>}
+                    </View>
+                    <Text style={styles.suggestDesc}>{s.desc}</Text>
+                    {isFavorite && (
+                      <View style={styles.favoritePill}>
+                        <Text style={styles.favoritePillText}>fan favorite 🔥</Text>
+                      </View>
+                    )}
+                    {!isFavorite && s.tag ? (
+                      <View style={styles.tagPill}>
+                        <Text style={styles.tagPillText}>{(s.tag || '').toLowerCase()}</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })
             )}
           </View>
 
-          {/* Who's free? */}
-          <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
-            <Text style={styles.sectionTitle}>Who's free?</Text>
-            <Text style={[styles.sectionSub, { marginBottom: 12 }]}>
-              Matched on your shared week
-            </Text>
+          {/* ─── Who's free? ─── */}
+          <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
+            <View style={styles.sectionHeaderLeft}>
+              <Text style={[styles.sectionHeader, HAND_500 && { fontFamily: HAND_500 }]}>who's free?</Text>
+              <Heart size={14} color={COLORS.coral} opacity={0.7} style={{ left: 6, top: 8 }} />
+            </View>
+            <Text style={styles.sectionSub}>matched on your shared week</Text>
 
             {availMatches.length === 0 ? (
               <View style={styles.emptyMatch}>
                 <Text style={styles.emptyMatchText}>
-                  Nobody's free at the same time as you. Update your availability or check back later.
+                  nobody's free at the same time as you. update your availability or check back later.
                 </Text>
               </View>
             ) : (
-              availMatches.map(({ member, overlap }) => {
+              availMatches.map(({ member, overlap }, i) => {
                 const mAccent = member.accent_color || member.profiles?.accent_color || COLORS.coral;
+                const tilt = i % 2 === 0 ? -1 : 1.5;
                 return (
-                  <View key={member.profile_id} style={styles.matchRow}>
-                    <ProfileAvatar profile={member.profiles || member} size={44} ringColor={mAccent} />
+                  <View
+                    key={member.profile_id}
+                    style={[styles.matchPolaroid, { transform: [{ rotate: `${tilt}deg` }] }]}
+                  >
+                    <WashiTape color={i % 2 === 0 ? 'coral' : 'lavender'} width={48} height={12} rotation={-3} opacity={0.7} style={{ top: -4, left: 16 }} />
+                    <ProfileAvatar profile={member.profiles || member} size={42} ringColor={mAccent} />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={styles.matchName} numberOfLines={1}>
                         {member.profiles?.name || member.name || 'Someone'}
                       </Text>
                       <View style={styles.slotChips}>
-                        {overlap.slice(0, 3).map((s, i) => (
-                          <View key={i} style={styles.slotPill}>
+                        {overlap.slice(0, 3).map((s, idx) => (
+                          <View key={idx} style={styles.slotPill}>
                             <Text style={styles.slotPillText}>{DAY_LABEL[s.day]} {SLOT_LABEL[s.slot]}</Text>
                           </View>
                         ))}
@@ -399,7 +508,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
                       onPress={() => setInviteFor({ member, overlap })}
                       style={styles.inviteBtn}
                     >
-                      <Text style={styles.inviteBtnText}>Send invite</Text>
+                      <Text style={styles.inviteBtnText}>send invite</Text>
                     </TouchableOpacity>
                   </View>
                 );
@@ -407,10 +516,13 @@ export default function ActivityDetailScreen({ route, navigation }) {
             )}
           </View>
 
-          {/* Pinned link */}
-          <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
-            <Text style={styles.sectionTitle}>📌 Squad pick</Text>
-            <Text style={[styles.sectionSub, { marginBottom: 10 }]}>Pin the link that actually worked</Text>
+          {/* ─── Pin a venue link ─── */}
+          <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
+            <View style={styles.sectionHeaderLeft}>
+              <Text style={[styles.sectionHeader, HAND_500 && { fontFamily: HAND_500 }]}>pin a venue link</Text>
+              <Star size={14} color={COLORS.amber} opacity={0.7} style={{ left: 6, top: 6 }} />
+            </View>
+            <Text style={styles.sectionSub}>pin the link that actually worked</Text>
 
             {pinned ? (
               <View style={styles.pinnedCard}>
@@ -418,13 +530,13 @@ export default function ActivityDetailScreen({ route, navigation }) {
                   <Text style={styles.pinnedLabel}>PINNED</Text>
                   <Text style={styles.pinnedUrl} numberOfLines={2}>{pinned.url}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setShowPinInput(true)}>
-                  <Text style={{ color: '#888', fontSize: 11, fontWeight: '700' }}>EDIT</Text>
+                <TouchableOpacity onPress={() => setShowPinInput(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.pinnedEdit}>EDIT</Text>
                 </TouchableOpacity>
               </View>
             ) : !showPinInput ? (
               <TouchableOpacity onPress={() => setShowPinInput(true)} style={styles.pinAddBtn}>
-                <Text style={{ color: '#666', fontSize: 13, fontWeight: '600' }}>＋ Pin a correct link</Text>
+                <Text style={styles.pinAddBtnText}>＋ pin a correct link</Text>
               </TouchableOpacity>
             ) : null}
 
@@ -439,30 +551,58 @@ export default function ActivityDetailScreen({ route, navigation }) {
                   style={styles.pinInput}
                 />
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                  <TouchableOpacity onPress={() => { setShowPinInput(false); setPinUrl(''); }} style={[styles.miniBtn, { backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.border }]}>
-                    <Text style={{ color: '#666', fontSize: 12, fontWeight: '700' }}>Cancel</Text>
+                  <TouchableOpacity onPress={() => { setShowPinInput(false); setPinUrl(''); }} style={[styles.miniBtn, { backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.cardBorder }]}>
+                    <Text style={{ color: '#666', fontSize: 12, fontWeight: '700' }}>cancel</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={handlePinSubmit} style={[styles.miniBtn, { backgroundColor: accent, flex: 1 }]}>
-                    <Text style={{ color: accentText, fontSize: 12, fontWeight: '700' }}>📌 Pin it</Text>
+                  <TouchableOpacity onPress={handlePinSubmit} style={[styles.miniBtn, { backgroundColor: COLORS.coral, flex: 1 }]}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>pin it</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             )}
           </View>
 
-          {/* Subtle Google link */}
+          {/* Subtle Google fallback */}
           <TouchableOpacity onPress={openGoogle} style={styles.googleLink}>
-            <Text style={styles.googleLinkText}>🔎 Search "{activity.name}" on Google</Text>
+            <Text style={styles.googleLinkText}>🔎 search "{activity.name}" on google</Text>
           </TouchableOpacity>
+
+          {/* Bottom decorative scatter */}
+          <View pointerEvents="none" style={styles.bottomAccents}>
+            <Sparkle size={12} color={COLORS.amber}     opacity={0.55} style={{ left: 30,  top: 0 }} />
+            <CurvedArrow size={36} color={COLORS.coral} opacity={0.45} style={{ right: 22, top: 8, transform: [{ rotate: '120deg' }] }} />
+            <Star size={11} color={COLORS.palmGreen}    opacity={0.5}  style={{ left: '50%', top: 24 }} />
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* ⋮ overflow sheet */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setMenuOpen(false)} style={menuStyles.backdrop}>
+          <View style={menuStyles.sheet} onStartShouldSetResponder={() => true}>
+            <MenuRow icon="✏️" label="edit lime"          onPress={() => { setMenuOpen(false); console.log('[detail] edit lime tap'); }} />
+            <MenuRow icon="↗"  label="share lime"         onPress={() => { setMenuOpen(false); console.log('[detail] share lime tap'); }} />
+            <MenuRow icon="🗑️" label="remove from lineup" onPress={() => { setMenuOpen(false); console.log('[detail] remove from lineup tap'); }} />
+            <TouchableOpacity onPress={() => setMenuOpen(false)} style={menuStyles.cancel}>
+              <Text style={menuStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-// ─── SendInviteModal ──────────────────────────────────────
-// Fixed heading "What yuh for? Leh we lime!" + activity + chosen
-// matching time slot + optional note. Inserts into invites table.
+function MenuRow({ icon, label, onPress }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={menuStyles.row}>
+      <Text style={menuStyles.rowIcon}>{icon}</Text>
+      <Text style={menuStyles.rowLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// ─── SendInviteModal (PRESERVED — DB calls untouched) ─────
 function SendInviteModal({ visible, match, activity, fromUserId, onClose, onSent }) {
   const insets = useSafeAreaInsets();
   const overlap = match?.overlap || [];
@@ -597,33 +737,159 @@ const inviteStyles = StyleSheet.create({
   sendText: { color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
 });
 
+const menuStyles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', padding: 16 },
+  sheet: { backgroundColor: '#fff', borderRadius: 20, padding: 8, marginBottom: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, paddingHorizontal: 14, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)' },
+  rowIcon: { fontSize: 18, width: 24, textAlign: 'center' },
+  rowLabel: { fontSize: 15, fontWeight: '600', color: COLORS.dark, textTransform: 'lowercase' },
+  cancel: { paddingVertical: 14, alignItems: 'center', marginTop: 4, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)' },
+  cancelText: { fontSize: 14, color: '#888', fontWeight: '700' },
+});
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  topBar: { padding: 18, paddingBottom: 0 },
-  backBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
+  safe: { flex: 1, backgroundColor: COLORS.cream },
 
-  hero: { margin: 22, marginTop: 14, padding: 36, borderRadius: 30, alignItems: 'center' },
-  heroEmoji: { fontSize: 84, marginBottom: 14 },
-  heroTierPill: { borderWidth: 1.5, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 10, marginBottom: 12 },
-  heroTierText: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
-  heroName: { fontSize: 30, fontWeight: '700', textAlign: 'center', letterSpacing: -0.6 },
-  heroSub: { fontSize: 13, marginTop: 8, opacity: 0.7, fontWeight: '600' },
+  // Header
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chev: { fontSize: 28, color: COLORS.dark, fontWeight: '500', lineHeight: 28 },
+  menuDots: { fontSize: 24, color: COLORS.dark, fontWeight: '700' },
 
-  badgeBtn: { padding: 17, borderRadius: 14, alignItems: 'center' },
-  badgeBtnText: { fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
+  // Hero polaroid + identity
+  heroWrap: { alignItems: 'center', paddingHorizontal: 22, marginTop: 8, marginBottom: 22, position: 'relative' },
+  heroPolaroid: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    paddingTop: 18, paddingHorizontal: 14, paddingBottom: 14,
+    transform: [{ rotate: '-2deg' }],
+    shadowColor: '#000', shadowOpacity: 0.08, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 2,
+    position: 'relative',
+    marginBottom: 16,
+    width: 200,
+    alignItems: 'center',
+  },
+  heroPhotoBox: {
+    width: 160, height: 160,
+    borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  heroEmoji: { fontSize: 80 },
+
+  heroName: { fontSize: 28, fontWeight: '600', color: COLORS.dark, letterSpacing: -0.6, textAlign: 'center', marginBottom: 10 },
+
+  pillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
+  tierPill: { paddingVertical: 5, paddingHorizontal: 11, borderRadius: 999 },
+  tierPillText: { fontSize: 11, fontWeight: '600', letterSpacing: 0.2 },
+  statusPill: { paddingVertical: 5, paddingHorizontal: 11, borderRadius: 999 },
+  statusPillText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
+
+  // CTA
+  ctaWrap: { paddingHorizontal: 22, marginBottom: 18 },
+  captureBtn: {
+    backgroundColor: '#E8704F',
+    height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    transform: [{ rotate: '-2deg' }],
+    shadowColor: '#000', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 4,
+  },
+  captureBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  limedBtn: {
+    backgroundColor: COLORS.palmGreen,
+    height: 40, borderRadius: 20,
+    alignSelf: 'center', paddingHorizontal: 18,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  limedBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  // Mini section label (existing pattern)
+  miniLabel: { fontSize: 10, fontWeight: '700', color: '#888', letterSpacing: 1.5, marginBottom: 10, textTransform: 'lowercase' },
+
+  // Squad reactions (preserved)
+  reactionsRow: { flexDirection: 'row', gap: 8 },
+  reactionBtn: {
+    flex: 1,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, borderRadius: 12,
+    backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.cardBorder,
+  },
+  reactionEmoji: { fontSize: 16 },
+  reactionCount: { fontSize: 12, fontWeight: '700', color: '#555' },
+
+  // Section headers (handwritten + doodle)
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 4 },
+  sectionHeaderLeft: { position: 'relative', height: 38, justifyContent: 'center', paddingRight: 24 },
+  sectionHeader: { fontSize: 22, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 28 },
+  sectionAside: { fontSize: 11, color: '#888', fontStyle: 'italic' },
+  sectionSub: { fontSize: 12, color: '#888', marginTop: 2, marginBottom: 12 },
+
+  // Location input (scoped to where-to-do-it)
+  locInput: {
+    backgroundColor: '#fff',
+    paddingVertical: 12, paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    fontSize: 14, color: COLORS.dark,
+    marginTop: 10, marginBottom: 14,
+  },
+
+  // AI loading + error states
+  loadingBox: { backgroundColor: '#fff', borderRadius: 18, padding: 36, alignItems: 'center', borderWidth: 1, borderColor: COLORS.cardBorder },
+  loadingText: { color: '#aaa', fontSize: 12, marginTop: 12 },
+  errorBox: { backgroundColor: '#FDE7DD', borderRadius: 18, padding: 22, alignItems: 'center', borderWidth: 1, borderColor: '#F0C5AE' },
+  errorText: { color: '#993C1D', fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  errorHint: { color: '#993C1D', fontSize: 11, marginTop: 6, opacity: 0.7, letterSpacing: 0.3 },
+
+  // Venue suggestion cards
+  suggestCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 1,
+  },
+  suggestName: { fontSize: 15, fontWeight: '700', color: COLORS.dark, flex: 1, marginRight: 8, letterSpacing: -0.2 },
+  suggestArrow: { color: '#888', fontSize: 18 },
+  suggestDesc: { fontSize: 12, color: '#777', lineHeight: 18, marginBottom: 10 },
+
+  favoritePill: { alignSelf: 'flex-start', backgroundColor: PASTELS.coralBg, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999 },
+  favoritePillText: { fontSize: 11, fontWeight: '700', color: COLORS.deepCoral },
+  tagPill: { alignSelf: 'flex-start', backgroundColor: '#F1EBDE', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999 },
+  tagPillText: { fontSize: 11, fontWeight: '600', color: '#666', letterSpacing: 0.2 },
 
   // Who's free?
-  matchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.cardBorder },
+  matchPolaroid: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16, padding: 12,
+    marginBottom: 10,
+    borderWidth: 1, borderColor: COLORS.cardBorder,
+    position: 'relative',
+    shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 1,
+  },
   matchName: { fontSize: 14, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
   slotChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' },
   slotPill: { paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, backgroundColor: '#F1EBDE' },
   slotPillText: { fontSize: 10, fontWeight: '700', color: '#666' },
   slotMore: { fontSize: 11, color: '#888', fontWeight: '600' },
-  inviteBtn: { backgroundColor: COLORS.coral, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 11 },
+  inviteBtn: { backgroundColor: COLORS.coral, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
   inviteBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   emptyMatch: { backgroundColor: '#fff', borderRadius: 16, padding: 18, borderWidth: 1, borderColor: COLORS.cardBorder },
   emptyMatchText: { color: '#888', fontSize: 13, lineHeight: 18, textAlign: 'center' },
 
+  // Pin a venue link
+  pinnedCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: COLORS.cardBorder },
+  pinnedLabel: { color: COLORS.coral, fontSize: 9, letterSpacing: 1.5, fontWeight: '700', marginBottom: 4 },
+  pinnedUrl: { color: COLORS.dark, fontSize: 12 },
+  pinnedEdit: { color: '#888', fontSize: 11, fontWeight: '700' },
+  pinAddBtn: { backgroundColor: '#fff', borderRadius: 14, padding: 14, alignItems: 'center', borderWidth: 1.5, borderStyle: 'dashed', borderColor: COLORS.cardBorder },
+  pinAddBtnText: { color: '#666', fontSize: 13, fontWeight: '600' },
+  pinInput: { backgroundColor: '#fff', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: COLORS.cardBorder, fontSize: 13, color: COLORS.dark },
+  miniBtn: { padding: 12, borderRadius: 12, alignItems: 'center', flex: 1 },
+
+  // Invite-sent toast
   inviteToast: {
     position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
     backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
@@ -631,42 +897,10 @@ const styles = StyleSheet.create({
   },
   inviteToastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
 
-  reactionsLabel: { fontSize: 10, fontWeight: '700', color: '#888', letterSpacing: 1.5, marginBottom: 10 },
-  reactionsRow: { flexDirection: 'row', gap: 8 },
-  reactionBtn: {
-    flex: 1,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 10, borderRadius: 12,
-    backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)',
-  },
-  reactionEmoji: { fontSize: 16 },
-  reactionCount: { fontSize: 12, fontWeight: '700', color: '#555' },
-
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
-  sectionSub: { fontSize: 11, color: '#999', letterSpacing: 0.2 },
-
-  locInput: { backgroundColor: '#fff', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', fontSize: 14, color: COLORS.dark, marginBottom: 16 },
-
+  // Google fallback
   googleLink: { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 20, marginTop: 16 },
   googleLinkText: { color: '#999', fontSize: 12, textDecorationLine: 'underline' },
 
-  loadingBox: { backgroundColor: '#fff', borderRadius: 18, padding: 36, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  loadingText: { color: '#aaa', fontSize: 12, marginTop: 12 },
-
-  errorBox: { backgroundColor: '#FDE7DD', borderRadius: 18, padding: 22, alignItems: 'center', borderWidth: 1, borderColor: '#F0C5AE' },
-  errorText: { color: '#993C1D', fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  errorHint: { color: '#993C1D', fontSize: 11, marginTop: 6, opacity: 0.7, letterSpacing: 0.3 },
-
-  suggestCard: { backgroundColor: '#fff', borderRadius: 18, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  suggestName: { fontSize: 15, fontWeight: '700', color: COLORS.dark, flex: 1, marginRight: 8, letterSpacing: -0.2 },
-  suggestDesc: { fontSize: 12, color: '#777', lineHeight: 18, marginBottom: 12 },
-  suggestTag: { alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 11, borderRadius: 8 },
-  suggestTagText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.2 },
-
-  pinnedCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: COLORS.dark, borderRadius: 16, padding: 16 },
-  pinnedLabel: { color: COLORS.coral, fontSize: 9, letterSpacing: 1.5, fontWeight: '700', marginBottom: 4 },
-  pinnedUrl: { color: '#fff', fontSize: 12 },
-  pinAddBtn: { backgroundColor: '#fff', borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.12)' },
-  pinInput: { backgroundColor: '#fff', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', fontSize: 13, color: COLORS.dark },
-  miniBtn: { padding: 12, borderRadius: 12, alignItems: 'center', flex: 1 },
+  // Bottom decorative
+  bottomAccents: { height: 50, marginTop: 10, position: 'relative' },
 });

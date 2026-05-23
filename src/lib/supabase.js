@@ -72,6 +72,22 @@ export async function addMemory(payload) {
   return data;
 }
 
+// Pull "memories/<profileId>/<file>" out of a public Lime-Photos URL so it
+// can be passed to storage.remove(). Returns null if the URL doesn't
+// match the bucket.
+export function extractPhotoPath(photoUrl, bucketName = 'Lime-Photos') {
+  if (!photoUrl) return null;
+  const marker = `/${bucketName}/`;
+  const idx = photoUrl.indexOf(marker);
+  if (idx === -1) return null;
+  return photoUrl.slice(idx + marker.length);
+}
+
+export async function deleteMemoryRow(memoryId) {
+  const { error } = await supabase.from('memories').delete().eq('id', memoryId);
+  if (error) throw error;
+}
+
 // ── COMMENTS ─────────────────────────────────────────────
 export async function addComment({ memoryId, profileId, text }) {
   const { data, error } = await supabase.from('comments').insert({
@@ -263,11 +279,16 @@ export async function uploadPhoto(uri, profileId, folder = 'memories') {
   const path = `${folder}/${profileId}/${Date.now()}.${ext}`;
   const response = await fetch(uri);
   const blob = await response.blob();
-  const { error } = await supabase.storage.from('lime-photos').upload(path, blob, {
+  const { data: { session } } = await supabase.auth.getSession();
+  console.log('[upload] auth session exists:', !!session);
+  console.log('[upload] auth user id:', session?.user?.id);
+  console.log('[upload] upload path:', path);
+  console.log('[upload] bucket name being used:', 'Lime-Photos');
+  const { error } = await supabase.storage.from('Lime-Photos').upload(path, blob, {
     contentType: `image/${ext}`, upsert: true,
   });
   if (error) throw error;
-  const { data } = supabase.storage.from('lime-photos').getPublicUrl(path);
+  const { data } = supabase.storage.from('Lime-Photos').getPublicUrl(path);
   return data.publicUrl;
 }
 

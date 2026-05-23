@@ -2,7 +2,7 @@ import React, { useContext, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Image,
   StyleSheet, ActivityIndicator, Alert, Modal, FlatList,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -163,17 +163,31 @@ export default function AddMemoryScreen({ navigation }) {
 
           {/* Photo */}
           <Text style={styles.label}>Drop a photo</Text>
-          <TouchableOpacity onPress={pickPhoto} style={styles.photoBox}>
-            {photo ? (
-              <Image source={{ uri: photo }} style={styles.photoPreview} />
-            ) : (
-              <View style={styles.photoEmpty}>
-                <Text style={{ fontSize: 48, marginBottom: 8 }}>📷</Text>
-                <Text style={{ color: '#888', fontWeight: '600' }}>Tap to pick from camera roll</Text>
-                <Text style={{ color: '#bbb', fontSize: 11, marginTop: 4 }}>1 photo per memory</Text>
-              </View>
+          <View style={{ position: 'relative' }}>
+            <TouchableOpacity onPress={pickPhoto} style={styles.photoBox}>
+              {photo ? (
+                <Image source={{ uri: photo }} style={styles.photoPreview} />
+              ) : (
+                <View style={styles.photoEmpty}>
+                  <Text style={{ fontSize: 48, marginBottom: 8 }}>📷</Text>
+                  <Text style={{ color: '#888', fontWeight: '600' }}>Tap to pick from camera roll</Text>
+                  <Text style={{ color: '#bbb', fontSize: 11, marginTop: 4 }}>1 photo per memory</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {photo && (
+              <Pressable
+                onPress={() => setPhoto(null)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={({ pressed }) => [
+                  styles.photoX,
+                  pressed && { transform: [{ scale: 0.9 }] },
+                ]}
+              >
+                <Text style={styles.photoXIcon}>✕</Text>
+              </Pressable>
             )}
-          </TouchableOpacity>
+          </View>
           {photo && (
             <TouchableOpacity onPress={pickPhoto} style={styles.changePhoto}>
               <Text style={{ color: '#666', fontSize: 12, fontWeight: '600' }}>Change photo</Text>
@@ -295,6 +309,15 @@ const styles = StyleSheet.create({
   photoBox: { borderRadius: 22, overflow: 'hidden', backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
   photoEmpty: { aspectRatio: 4 / 5, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.12)', borderRadius: 20, margin: 4 },
   photoPreview: { width: '100%', aspectRatio: 4 / 5 },
+  photoX: {
+    position: 'absolute', top: 8, right: 8,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1, borderColor: '#EBE2D0',
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.12, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 3,
+  },
+  photoXIcon: { fontSize: 16, color: '#555', fontWeight: '600', lineHeight: 18 },
   changePhoto: { alignSelf: 'center', marginTop: 10, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
 
   caption: { backgroundColor: '#fff', borderRadius: 16, padding: 16, fontSize: 15, color: COLORS.dark, minHeight: 110, textAlignVertical: 'top', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', lineHeight: 22 },

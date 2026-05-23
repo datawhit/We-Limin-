@@ -53,6 +53,13 @@ export default function ScrapbookScreen({ navigation }) {
 
   useEffect(() => { load(); }, []);
 
+  // Reload memories when the screen regains focus (e.g. coming back
+  // from MemoryDetail after a delete, or from AddMemory after a save).
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', load);
+    return unsub;
+  }, [navigation]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -206,7 +213,7 @@ export default function ScrapbookScreen({ navigation }) {
                     tiltDeg={tilt}
                     pill={`${badge.emoji} ${badge.name}`}
                     pillVariant="badge"
-                    onPress={() => { /* memory detail screen: future */ }}
+                    onPress={() => navigation.navigate('MemoryDetail', { memory: m })}
                   />
                 </View>
               );

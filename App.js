@@ -13,6 +13,7 @@ import ActivityDetailScreen from './src/screens/ActivityDetailScreen';
 import SquadScreen from './src/screens/SquadScreen';
 import ScrapbookScreen from './src/screens/ScrapbookScreen';
 import AddMemoryScreen from './src/screens/AddMemoryScreen';
+import MemoryDetailScreen from './src/screens/MemoryDetailScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 
 import { getProfile, getBadges, upsertProfile, uploadPhoto, supabase } from './src/lib/supabase';
@@ -84,6 +85,7 @@ function ScrapbookStack() {
     <TabStack.Navigator screenOptions={{ headerShown: false }}>
       <TabStack.Screen name="ScrapbookList" component={ScrapbookScreen} />
       <TabStack.Screen name="AddMemory" component={AddMemoryScreen} />
+      <TabStack.Screen name="MemoryDetail" component={MemoryDetailScreen} />
     </TabStack.Navigator>
   );
 }
