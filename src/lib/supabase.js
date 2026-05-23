@@ -142,6 +142,20 @@ export async function deleteUserActivity(id) {
   if (error) throw error;
 }
 
+// One row's worth of "the user's relationship to this seed activity":
+// source ('lime_pick' | 'dream' | 'squad_plan'), status ('up_next' |
+// 'planned' | 'lived'), and target_date. Returns null when nothing is
+// saved. NOTE: existing schema uses profile_id, not user_id.
+export async function getUserActivity(profileId, activityId) {
+  const { data } = await supabase
+    .from('user_activities')
+    .select('id, source, status, target_date')
+    .eq('profile_id', profileId)
+    .eq('activity_id', activityId)
+    .maybeSingle();
+  return data || null;
+}
+
 // ── SQUAD REACTIONS ───────────────────────────────────────
 // One row per (activity_id, profile_id). Replacing one user's reaction
 // is just an upsert. Removing = delete.

@@ -13,6 +13,7 @@ import {
   earnBadge, removeBadge, getPinnedLink, pinLink,
   getReactionsForActivity, setReaction, clearReaction,
   getWeekAvailability, sendInvite,
+  supabase, getUserActivity,
 } from '../lib/supabase';
 import { getAISuggestions, getAIFallback } from '../lib/ai';
 import BadgeUnlockModal from '../components/BadgeUnlockModal';
@@ -63,6 +64,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
   const [availMatches, setAvailMatches] = useState([]);
   const [inviteFor, setInviteFor] = useState(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastText, setToastText] = useState('Invite sent 🍋');
   const toastY = useRef(new Animated.Value(-80)).current;
 
   // Squad reactions (PRESERVED — state + handlers untouched)
@@ -88,6 +90,11 @@ export default function ActivityDetailScreen({ route, navigation }) {
   // NEW: lineup-saved tracking (reads same key the Explore screen
   // writes to). Drives the "in your lineup" status pill.
   const [savedSet, setSavedSet] = useState([]);
+  // The user_activities row for (this profile, this activity) — drives
+  // the adaptive CTA (STATE A "save as a dream" / B "capture this lime"
+  // / C "limed it ✓"). Null until first load completes.
+  const [ua, setUa] = useState(null);
+  const [savingDream, setSavingDream] = useState(false);
 
   const [fontsLoaded] = useFonts({ Caveat_500Medium });
   const HAND_500 = fontsLoaded ? HANDWRITTEN_500 : undefined;
@@ -123,7 +130,35 @@ export default function ActivityDetailScreen({ route, navigation }) {
     loadReactions();
     loadAvailMatches();
     loadSaved();
+    loadUa();
   }, []);
+
+  const loadUa = async () => {
+    try { setUa(await getUserActivity(profile.id, activity.id)); }
+    catch (e) { /* silent; treat as null */ }
+  };
+
+  // STATE A onPress: insert a 'dream' row, then refetch so the CTA flips
+  // to STATE B ("capture this lime ✨") without a screen reload.
+  const saveAsDream = async () => {
+    if (savingDream) return;
+    setSavingDream(true);
+    try {
+      const { error } = await supabase.from('user_activities').insert({
+        profile_id: profile.id,
+        activity_id: activity.id,
+        source: 'dream',
+        status: 'up_next',
+      });
+      if (error) throw error;
+      await loadUa();
+      flashToast('added to your dreams 💭');
+    } catch (e) {
+      console.warn('[detail] saveAsDream failed:', e?.message || e);
+      Alert.alert('Oops', "Couldn't save that one. Try again?");
+    }
+    setSavingDream(false);
+  };
 
   const loadSaved = async () => {
     try {
@@ -153,7 +188,8 @@ export default function ActivityDetailScreen({ route, navigation }) {
     } catch (e) { /* empty state */ }
   };
 
-  const flashToast = () => {
+  const flashToast = (text = 'Invite sent 🍋') => {
+    setToastText(text);
     setToastVisible(true);
     toastY.setValue(-80);
     Animated.sequence([
@@ -305,7 +341,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
       />
       {toastVisible && (
         <Animated.View style={[styles.inviteToast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
-          <Text style={styles.inviteToastText}>Invite sent 🍋</Text>
+          <Text style={styles.inviteToastText}>{toastText}</Text>
         </Animated.View>
       )}
 
@@ -366,15 +402,27 @@ export default function ActivityDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          {/* ─── Primary CTA ─── */}
+          {/* ─── Primary CTA (adaptive: dream → capture → lived) ─── */}
           <View style={styles.ctaWrap}>
-            {!earned ? (
+            {(earned || ua?.status === 'lived') ? (
+              // STATE C — already lived. Preserves existing limedBtn styling.
+              <TouchableOpacity onPress={viewMemory} activeOpacity={0.85} style={styles.limedBtn}>
+                <Text style={styles.limedBtnText}>limed it ✓</Text>
+              </TouchableOpacity>
+            ) : ua ? (
+              // STATE B — saved (dream / lime_pick / squad_plan). Capture flow.
               <TouchableOpacity onPress={captureMemory} activeOpacity={0.85} style={styles.captureBtn}>
                 <Text style={styles.captureBtnText}>capture this lime ✨</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={viewMemory} activeOpacity={0.85} style={styles.limedBtn}>
-                <Text style={styles.limedBtnText}>limed it ✓</Text>
+              // STATE A — not saved anywhere. Offer "save as a dream".
+              <TouchableOpacity
+                onPress={saveAsDream}
+                disabled={savingDream}
+                activeOpacity={0.85}
+                style={[styles.captureBtn, savingDream && { opacity: 0.5 }]}
+              >
+                <Text style={styles.captureBtnText}>save as a dream 💭</Text>
               </TouchableOpacity>
             )}
           </View>

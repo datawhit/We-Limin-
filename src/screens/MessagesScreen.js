@@ -1,7 +1,7 @@
-import React, { useContext, useEffect, useState, useMemo } from 'react';
+import React, { useContext, useEffect, useState, useMemo, useRef } from 'react';
 import {
   Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  ActivityIndicator, RefreshControl, Alert,
+  ActivityIndicator, RefreshControl, Alert, Animated,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppContext } from '../lib/AppContext';
@@ -9,6 +9,7 @@ import ProfileAvatar from '../components/ProfileAvatar';
 import { ACTIVITIES, COLORS, TIER } from '../lib/constants';
 import {
   getInvitesReceived, getInvitesSent, setInviteStatus, markAllReceivedRead,
+  supabase, getUserActivity,
 } from '../lib/supabase';
 
 const INVITE_HEADING = 'What yuh for? Leh we lime!';
@@ -50,15 +51,83 @@ export default function MessagesScreen({ visible, onClose }) {
     setRefreshing(false);
   };
 
-  const updateStatus = async (invite, status) => {
-    setReceived(rs => rs.map(r => r.id === invite.id ? { ...r, status } : r));
-    try { await setInviteStatus(invite.id, status); }
+  // Per-invite in-flight flag so the Accept/Decline buttons can't be
+  // double-tapped. Keyed by invite.id.
+  const [pendingIds, setPendingIds] = useState({});
+  const setPending = (id, v) => setPendingIds(p => ({ ...p, [id]: v }));
+
+  // Toast for "you're in! ✨" and friends.
+  const [toastText, setToastText] = useState(null);
+  const toastY = useRef(new Animated.Value(-80)).current;
+  const flashToast = (text) => {
+    setToastText(text);
+    toastY.setValue(-80);
+    Animated.sequence([
+      Animated.spring(toastY, { toValue: 12, useNativeDriver: true, friction: 6 }),
+      Animated.delay(1700),
+      Animated.timing(toastY, { toValue: -80, duration: 220, useNativeDriver: true }),
+    ]).start(() => setToastText(null));
+  };
+
+  // Decline path — unchanged behavior, just adds in-flight guard.
+  const declineInvite = async (invite) => {
+    if (pendingIds[invite.id]) return;
+    setPending(invite.id, true);
+    setReceived(rs => rs.map(r => r.id === invite.id ? { ...r, status: 'declined' } : r));
+    try { await setInviteStatus(invite.id, 'declined'); }
     catch (e) { Alert.alert('Oops', "Couldn't update the invite. Try again?"); load(); }
+    setPending(invite.id, false);
+  };
+
+  // Accept path — updates invite, then (NEW) writes to user_activities so
+  // the activity shows up in the Lineup under the "squad plan" lens.
+  const acceptInvite = async (invite) => {
+    if (pendingIds[invite.id]) return;
+    setPending(invite.id, true);
+    setReceived(rs => rs.map(r => r.id === invite.id ? { ...r, status: 'accepted' } : r));
+    try {
+      await supabase
+        .from('invites')
+        .update({ status: 'accepted', read_at: new Date().toISOString() })
+        .eq('id', invite.id);
+
+      const existing = await getUserActivity(profile.id, invite.activity_id).catch(() => null);
+      if (existing) {
+        await supabase
+          .from('user_activities')
+          .update({
+            source: 'squad_plan',
+            status: 'planned',
+            ...(invite.suggested_time ? { target_date: invite.suggested_time } : {}),
+          })
+          .eq('id', existing.id);
+      } else {
+        await supabase.from('user_activities').insert({
+          profile_id: profile.id,
+          activity_id: invite.activity_id,
+          source: 'squad_plan',
+          status: 'planned',
+          ...(invite.suggested_time ? { target_date: invite.suggested_time } : {}),
+        });
+      }
+
+      flashToast("you're in! ✨");
+    } catch (e) {
+      console.warn('[messages] acceptInvite failed:', e?.message || e);
+      Alert.alert('Oops', "Couldn't accept the invite. Try again?");
+      load();
+    }
+    setPending(invite.id, false);
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safe} edges={['bottom']}>
+        {toastText && (
+          <Animated.View style={[styles.toast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
+            <Text style={styles.toastText}>{toastText}</Text>
+          </Animated.View>
+        )}
         <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
           <TouchableOpacity
             onPress={onClose}
@@ -112,8 +181,9 @@ export default function MessagesScreen({ visible, onClose }) {
                   key={inv.id}
                   invite={inv}
                   outgoing={false}
-                  onAccept={() => updateStatus(inv, 'accepted')}
-                  onDecline={() => updateStatus(inv, 'declined')}
+                  pending={!!pendingIds[inv.id]}
+                  onAccept={() => acceptInvite(inv)}
+                  onDecline={() => declineInvite(inv)}
                 />
               ))
             )
@@ -136,7 +206,7 @@ export default function MessagesScreen({ visible, onClose }) {
   );
 }
 
-function InviteRow({ invite, outgoing, onAccept, onDecline }) {
+function InviteRow({ invite, outgoing, onAccept, onDecline, pending = false }) {
   const activity = useMemo(
     () => ACTIVITIES.find(a => a.id === invite.activity_id) || { name: 'Activity', emoji: '🍋', tier: 'chill' },
     [invite.activity_id]
@@ -176,11 +246,11 @@ function InviteRow({ invite, outgoing, onAccept, onDecline }) {
           <StatusBadge status={invite.status} />
         ) : invite.status === 'pending' ? (
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity onPress={onDecline} style={styles.declineBtn}>
+            <TouchableOpacity onPress={onDecline} disabled={pending} style={[styles.declineBtn, pending && { opacity: 0.5 }]}>
               <Text style={styles.declineText}>Decline</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={onAccept} style={styles.acceptBtn}>
-              <Text style={styles.acceptText}>Accept</Text>
+            <TouchableOpacity onPress={onAccept} disabled={pending} style={[styles.acceptBtn, pending && { opacity: 0.5 }]}>
+              {pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>Accept</Text>}
             </TouchableOpacity>
           </View>
         ) : (
@@ -252,7 +322,13 @@ const styles = StyleSheet.create({
   note: { fontSize: 13, color: '#555', fontStyle: 'italic', marginTop: 10, lineHeight: 18 },
 
   footer: { marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' },
-  acceptBtn: { backgroundColor: COLORS.coral, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
+  acceptBtn: { backgroundColor: COLORS.coral, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, minWidth: 80, alignItems: 'center' },
+  toast: {
+    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+  },
+  toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
   acceptText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   declineBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   declineText: { color: '#888', fontSize: 13, fontWeight: '700' },

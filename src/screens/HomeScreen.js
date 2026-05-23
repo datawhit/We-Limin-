@@ -11,7 +11,7 @@ import ProfileAvatar from '../components/ProfileAvatar';
 import {
   ACTIVITIES, COLORS, TIER, RATINGS, HOME_TAGLINES, TIERS, getTier,
 } from '../lib/constants';
-import { getMemories, getBadges, getAllMembers } from '../lib/supabase';
+import { getMemories, getBadges, getAllMembers, supabase, getUserActivity } from '../lib/supabase';
 import AvailabilityModal, { isMondayToday } from './AvailabilityModal';
 import SettingsModal from './SettingsModal';
 import EditProfileModal from './EditProfileModal';
@@ -23,7 +23,7 @@ import { getUnreadInviteCount } from '../lib/supabase';
 import Polaroid from '../components/Polaroid';
 import WashiTape from '../components/WashiTape';
 import { Star, Heart, Sparkle, CurvedArrow, Underline } from '../components/Doodles';
-import { HANDWRITTEN_500 } from '../lib/theme';
+import { HANDWRITTEN_500, PASTELS } from '../lib/theme';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -44,6 +44,21 @@ const POLAROID_WASHI    = ['pink',     'blue',    'coral',   'lavender', 'amber'
 const POLAROID_EMOJI_BG = ['#FDEED7',  '#D6F0F4', '#FCDCD0', '#E4DEF6',  '#D6F0DD'];
 const POLAROID_TILT     = [-2,         2,         -1.5,      2,          -2.5];
 
+// Lineup filter pills. `source` / `status` are derived from each lineup
+// item's `pill` value (see below) since the existing lineup pipeline
+// builds from ACTIVITIES + spinPick rather than from user_activities.
+const LINEUP_FILTERS = [
+  { id: 'all',        label: 'all' },
+  { id: 'up_next',    label: 'up next' },
+  { id: 'dreams',     label: 'dreams' },
+  { id: 'lime_picks', label: 'lime picks' },
+];
+const LINEUP_EMPTY_COPY = {
+  up_next:    'nothing on deck — go find some limes 🍋',
+  dreams:     "no dreams yet — what would you do if money wasn't a thing? ✨",
+  lime_picks: 'spin the lime to save some picks 🎰',
+};
+
 export default function HomeScreen() {
   // ─── PRESERVED: all hooks, state, effects, AppContext, navigation ───
   const { profile, myBadges, setMyBadges } = useContext(AppContext);
@@ -63,6 +78,44 @@ export default function HomeScreen() {
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const mondayNudge = isMondayToday();
+
+  // "Save for later 🎰" — toast + in-flight flag for the spin-pick save.
+  const [savingPick, setSavingPick] = useState(false);
+  const [toastText, setToastText] = useState(null);
+  const toastY = useRef(new Animated.Value(-80)).current;
+  const flashToast = (text) => {
+    setToastText(text);
+    toastY.setValue(-80);
+    Animated.sequence([
+      Animated.spring(toastY, { toValue: 12, useNativeDriver: true, friction: 6 }),
+      Animated.delay(1700),
+      Animated.timing(toastY, { toValue: -80, duration: 220, useNativeDriver: true }),
+    ]).start(() => setToastText(null));
+  };
+
+  const saveSpinPick = async () => {
+    if (!spinPick || savingPick) return;
+    setSavingPick(true);
+    try {
+      const existing = await getUserActivity(profile.id, spinPick.id).catch(() => null);
+      if (existing) {
+        flashToast('already in your lineup ✨');
+      } else {
+        const { error } = await supabase.from('user_activities').insert({
+          profile_id: profile.id,
+          activity_id: spinPick.id,
+          source: 'lime_pick',
+          status: 'up_next',
+        });
+        if (error) throw error;
+        flashToast('saved as a lime pick 🎰');
+      }
+    } catch (e) {
+      console.warn('[home] saveSpinPick failed:', e?.message || e);
+      flashToast("couldn't save — try again");
+    }
+    setSavingPick(false);
+  };
 
   const refreshUnread = async () => {
     try { setUnreadCount(await getUnreadInviteCount(profile.id)); }
@@ -194,8 +247,29 @@ export default function HomeScreen() {
     return picks;
   }, [myBadges, spinPick]);
 
+  // Filter pills above the lineup carousel. Translates the picks' `pill`
+  // into the (source, status) signal the user thinks in terms of:
+  //   pill === 'from spin'           → lime_picks
+  //   pill === 'up next' | 'next up' → up_next
+  //   pill === null                  → dreams
+  const [lineupFilter, setLineupFilter] = useState('all');
+  const filteredLineup = useMemo(() => {
+    switch (lineupFilter) {
+      case 'up_next':    return lineup.filter(p => p.pill === 'up next' || p.pill === 'next up');
+      case 'dreams':     return lineup.filter(p => p.pill == null);
+      case 'lime_picks': return lineup.filter(p => p.pill === 'from spin');
+      case 'all':
+      default:           return lineup;
+    }
+  }, [lineup, lineupFilter]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {toastText && (
+        <Animated.View style={[styles.toast, { transform: [{ translateY: toastY }] }]} pointerEvents="none">
+          <Text style={styles.toastText}>{toastText}</Text>
+        </Animated.View>
+      )}
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.dark} />}
@@ -293,9 +367,23 @@ export default function HomeScreen() {
                   <Text style={[styles.spinResultTierText, { color: t.text }]}>{t.label} tier</Text>
                 </View>
                 {spinPick && !spinning && (
-                  <TouchableOpacity onPress={() => openDetail(spinPick)} style={styles.spinResultCta}>
-                    <Text style={styles.spinResultCtaText}>Let's do it →</Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity onPress={() => openDetail(spinPick)} style={styles.spinResultCta}>
+                      <Text style={styles.spinResultCtaText}>Let's do it →</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={saveSpinPick}
+                      disabled={savingPick}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={styles.saveForLaterWrap}
+                    >
+                      <Text style={[styles.saveForLaterText, HAND_500 && { fontFamily: HAND_500 }, savingPick && { opacity: 0.5 }]}>
+                        save for later 🎰
+                      </Text>
+                      <Underline size={120} color="#E8704F" opacity={0.85} style={{ top: 18, alignSelf: 'center', left: '50%', marginLeft: -60 }} />
+                    </TouchableOpacity>
+                  </>
                 )}
               </View>
             );
@@ -320,39 +408,73 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* 2-column polaroid grid */}
-          <View style={styles.grid}>
-            {lineup.map((p, i) => (
-              <View key={p.activity.id} style={styles.gridCell}>
-                <Polaroid
-                  emoji={p.activity.emoji}
-                  title={p.activity.name}
-                  subtitle={
-                    p.pill === 'from spin'
-                      ? `From spin · Earns ${p.activity.badge}`
-                      : `Earns: ${p.activity.badge}`
-                  }
-                  washiColor={POLAROID_WASHI[i % POLAROID_WASHI.length]}
-                  emojiBg={POLAROID_EMOJI_BG[i % POLAROID_EMOJI_BG.length]}
-                  tiltDeg={POLAROID_TILT[i % POLAROID_TILT.length]}
-                  pill={p.pill}
-                  onPress={() => openDetail(p.activity)}
-                />
-              </View>
-            ))}
-            {/* Add a dream tile */}
-            <View style={styles.gridCell}>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('Activities')}
-                activeOpacity={0.85}
-                style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
-              >
-                <Text style={styles.addPlus}>+</Text>
-                <Text style={styles.addDreamText}>add a dream</Text>
-                <Underline size={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
-              </TouchableOpacity>
+          {/* Filter pills (above the carousel) */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRow}
+            style={{ marginBottom: 14, marginHorizontal: -2 }}
+          >
+            {LINEUP_FILTERS.map(f => {
+              const on = lineupFilter === f.id;
+              return (
+                <TouchableOpacity
+                  key={f.id}
+                  onPress={() => setLineupFilter(f.id)}
+                  activeOpacity={0.85}
+                  style={styles.filterPillWrap}
+                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                >
+                  {on && <WashiTape color="amber" width="78%" height={12} rotation={-2} opacity={0.65} style={{ top: 12, left: '11%' }} />}
+                  <View style={[styles.filterPill, on ? styles.filterPillOn : styles.filterPillOff]}>
+                    <Text style={[styles.filterPillText, on ? styles.filterPillTextOn : styles.filterPillTextOff]}>{f.label}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* 2-column polaroid grid (or per-filter empty state) */}
+          {lineupFilter !== 'all' && filteredLineup.length === 0 ? (
+            <View style={styles.lineupEmpty}>
+              <Text style={styles.lineupEmptyText}>{LINEUP_EMPTY_COPY[lineupFilter]}</Text>
             </View>
-          </View>
+          ) : (
+            <View style={styles.grid}>
+              {filteredLineup.map((p, i) => (
+                <View key={p.activity.id} style={styles.gridCell}>
+                  <Polaroid
+                    emoji={p.activity.emoji}
+                    title={p.activity.name}
+                    subtitle={
+                      p.pill === 'from spin'
+                        ? `From spin · Earns ${p.activity.badge}`
+                        : `Earns: ${p.activity.badge}`
+                    }
+                    washiColor={POLAROID_WASHI[i % POLAROID_WASHI.length]}
+                    emojiBg={POLAROID_EMOJI_BG[i % POLAROID_EMOJI_BG.length]}
+                    tiltDeg={POLAROID_TILT[i % POLAROID_TILT.length]}
+                    pill={p.pill}
+                    onPress={() => openDetail(p.activity)}
+                  />
+                </View>
+              ))}
+              {/* Add a dream tile — only shown on the "all" view */}
+              {lineupFilter === 'all' && (
+                <View style={styles.gridCell}>
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('Activities')}
+                    activeOpacity={0.85}
+                    style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
+                  >
+                    <Text style={styles.addPlus}>+</Text>
+                    <Text style={styles.addDreamText}>add a dream</Text>
+                    <Underline size={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         {/* ─── Next Unlock ─── */}
@@ -526,6 +648,18 @@ const styles = StyleSheet.create({
   spinResultCta: { backgroundColor: COLORS.coral, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
   spinResultCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
+  // Save-for-later under the spin "Let's do it →" button
+  saveForLaterWrap: { marginTop: 12, position: 'relative', alignItems: 'center', minHeight: 44, justifyContent: 'center' },
+  saveForLaterText: { color: '#E8704F', fontSize: 16, lineHeight: 20, letterSpacing: -0.2 },
+
+  // Inline toast (shared across save actions)
+  toast: {
+    position: 'absolute', left: 22, right: 22, top: 4, zIndex: 100,
+    backgroundColor: COLORS.dark, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18,
+    shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+  },
+  toastText: { color: COLORS.cream, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+
   // The Lineup card
   lineupCard: {
     backgroundColor: '#FAF1DD', borderRadius: 28, padding: 22, marginBottom: 22,
@@ -537,6 +671,31 @@ const styles = StyleSheet.create({
   lineupSub: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 4 },
   addLineupBtn: { paddingTop: 6, paddingRight: 0, position: 'relative' },
   addLineupText: { color: COLORS.coral, fontSize: 16, fontWeight: '700' },
+
+  // Lineup filter pills
+  filterRow: { gap: 8, alignItems: 'center', paddingHorizontal: 2, paddingVertical: 4 },
+  filterPillWrap: { position: 'relative', justifyContent: 'center' },
+  filterPill: {
+    height: 36, borderRadius: 18,
+    paddingHorizontal: 14,
+    alignItems: 'center', justifyContent: 'center',
+    minWidth: 56,
+  },
+  filterPillOn:  { backgroundColor: '#E8704F' },
+  filterPillOff: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#EBE2D0' },
+  filterPillText: { fontSize: 13, letterSpacing: 0.1 },
+  filterPillTextOn:  { color: '#fff', fontWeight: '500' },
+  filterPillTextOff: { color: COLORS.dark, fontWeight: '400' },
+
+  // Lineup per-filter empty state
+  lineupEmpty: {
+    backgroundColor: PASTELS.lavenderBg,
+    borderRadius: 14,
+    height: 60,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  lineupEmptyText: { fontSize: 12, color: '#888', fontStyle: 'italic', textTransform: 'lowercase', textAlign: 'center' },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 22 },
   gridCell: { width: '47%' },
