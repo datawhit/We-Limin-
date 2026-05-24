@@ -61,7 +61,7 @@ export default function ProfileScreen({ navigation }) {
   // screen param; that pops the Profile modal off the root stack and
   // surfaces the requested tab in one shot.
   const goBack       = () => navigation.goBack();
-  const goBadges     = () => setTiersOpen(true);
+  const goBadges     = () => navigation.navigate('Badges');
   const goScrapbook  = () => navigation.navigate('Tabs', { screen: 'Scrapbook' });
   const goAdventures = () => navigation.navigate('Tabs', { screen: 'Activities' });
   const openSettings = () => setSettingsOpen(true);

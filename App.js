@@ -15,6 +15,7 @@ import ScrapbookScreen from './src/screens/ScrapbookScreen';
 import AddMemoryScreen from './src/screens/AddMemoryScreen';
 import MemoryDetailScreen from './src/screens/MemoryDetailScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import BadgesScreen from './src/screens/BadgesScreen';
 
 import { getProfile, getBadges, upsertProfile, uploadPhoto, supabase } from './src/lib/supabase';
 import { COLORS } from './src/lib/constants';
@@ -107,6 +108,11 @@ function RootNavigator() {
         component={ActivityDetailScreen}
         options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         initialParams={{ isModal: true }}
+      />
+      <RootStack.Screen
+        name="Badges"
+        component={BadgesScreen}
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
       />
     </RootStack.Navigator>
   );
