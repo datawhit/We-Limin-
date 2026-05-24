@@ -113,17 +113,17 @@ export async function pinLink({ activityId, profileId, url }) {
 }
 
 // ── USER ACTIVITIES (CRUD) ────────────────────────────────
-// Seed activities live in constants.js. user_activities holds anything
-// the user has created themselves. Shape mirrors the seed: numeric id
-// (timestamp), name, emoji, badge, tier, tripType, plus extra fields:
-// location, notes, cost, tags (jsonb), pinned, suggested_at.
+// Row shape: id, profile_id, activity_id, source, status, created_at, target_date, notes.
 export async function getUserActivities(profileId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('user_activities')
     .select('*')
     .eq('profile_id', profileId)
-    .order('pinned', { ascending: false })
     .order('created_at', { ascending: false });
+  if (error) {
+    console.warn('[supabase/getUserActivities] failed:', error.message);
+    return [];
+  }
   return data || [];
 }
 
