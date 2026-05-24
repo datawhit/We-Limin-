@@ -16,6 +16,8 @@ import AddMemoryScreen from './src/screens/AddMemoryScreen';
 import MemoryDetailScreen from './src/screens/MemoryDetailScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import BadgesScreen from './src/screens/BadgesScreen';
+import WelcomeScreen from './src/screens/WelcomeScreen';
+import AuthScreen from './src/screens/AuthScreen';
 
 import { getProfile, getBadges, upsertProfile, uploadPhoto, supabase } from './src/lib/supabase';
 import { COLORS } from './src/lib/constants';
@@ -34,9 +36,10 @@ console.log('[lime] Supabase URL:', supabaseUrl || '(missing)');
 console.log('[lime] Supabase key present:', !!supabaseKey);
 console.log('[lime] Supabase configured:', supabaseConfigured);
 
-const Tab        = createBottomTabNavigator();
-const TabStack   = createNativeStackNavigator();
-const RootStack  = createNativeStackNavigator();
+const Tab          = createBottomTabNavigator();
+const TabStack     = createNativeStackNavigator();
+const RootStack    = createNativeStackNavigator();
+const WelcomeStack = createNativeStackNavigator();
 
 function TabNavigator() {
   return (
@@ -118,18 +121,47 @@ function RootNavigator() {
   );
 }
 
+// Pre-auth stack — only mounted when the user has neither a Supabase
+// session nor a legacy synthetic-id profile. W1.2b will replace the
+// Auth stub with the real magic-link / Apple / Google surface.
+function WelcomeStackNavigator() {
+  return (
+    <WelcomeStack.Navigator screenOptions={{ headerShown: false }}>
+      <WelcomeStack.Screen name="Welcome" component={WelcomeScreen} />
+      <WelcomeStack.Screen name="Auth" component={AuthScreen} />
+    </WelcomeStack.Navigator>
+  );
+}
+
 export default function App() {
   const [profile, setProfile] = useState(null);
   const [myBadges, setMyBadges] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
 
   useEffect(() => { init(); }, []);
+
+  // Subscribe to auth state changes — keeps `session` in sync with
+  // sign-in / sign-out events fired by supabase-js anywhere in the app.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const init = async () => {
     // Record first-open time of the day so the Spontaneous hidden
     // badge can check whether a completion happened within 2h.
     markFirstOpenToday();
     try {
+      // Session detection first — drives the pre-auth routing branch
+      // below. Profile hydration for authed users is deferred to W4.
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (currentSession) {
+        setSession(currentSession);
+      }
+
       const id = await AsyncStorage.getItem(USER_ID_KEY);
       if (!id) { setLoading(false); return; }
 
@@ -269,10 +301,13 @@ export default function App() {
     );
   }
 
-  if (!profile) {
+  const needsAuth = !session && !profile;
+  if (needsAuth) {
     return (
       <SafeAreaProvider>
-        <SetupScreen onComplete={handleSetupComplete} />
+        <NavigationContainer>
+          <WelcomeStackNavigator />
+        </NavigationContainer>
       </SafeAreaProvider>
     );
   }
