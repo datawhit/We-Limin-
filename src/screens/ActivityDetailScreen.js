@@ -1,7 +1,7 @@
 import React, { useContext, useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Animated,
-  StyleSheet, ActivityIndicator, Linking, Alert,
+  StyleSheet, ActivityIndicator, Linking, Alert, Share,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -634,9 +634,53 @@ export default function ActivityDetailScreen({ route, navigation }) {
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <TouchableOpacity activeOpacity={1} onPress={() => setMenuOpen(false)} style={menuStyles.backdrop}>
           <View style={menuStyles.sheet} onStartShouldSetResponder={() => true}>
-            <MenuRow icon="✏️" label="edit lime"          onPress={() => { setMenuOpen(false); console.log('[detail] edit lime tap'); }} />
-            <MenuRow icon="↗"  label="share lime"         onPress={() => { setMenuOpen(false); console.log('[detail] share lime tap'); }} />
-            <MenuRow icon="🗑️" label="remove from lineup" onPress={() => { setMenuOpen(false); console.log('[detail] remove from lineup tap'); }} />
+            <MenuRow
+              icon="✏️"
+              label="edit lime"
+              onPress={() => {
+                setMenuOpen(false);
+                navigation.navigate('Tabs', { screen: 'Activities', params: { editActivity: activity } });
+              }}
+            />
+            <MenuRow
+              icon="↗"
+              label="share lime"
+              onPress={async () => {
+                setMenuOpen(false);
+                try {
+                  await Share.share({ message: `let's lime — ${activity.emoji} ${activity.name}` });
+                } catch (e) { /* user dismissed; not an error case */ }
+              }}
+            />
+            <MenuRow
+              icon="🗑️"
+              label="remove from lineup"
+              onPress={() => {
+                setMenuOpen(false);
+                Alert.alert(
+                  'Remove from lineup?',
+                  "this'll take it off your lime list. you can always add it back.",
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Remove', style: 'destructive', onPress: async () => {
+                      try {
+                        const { error } = await supabase
+                          .from('user_activities')
+                          .delete()
+                          .eq('profile_id', profile.id)
+                          .eq('activity_id', activity.id);
+                        if (error) throw error;
+                        flashToast('removed from your lineup');
+                        await loadUa();
+                      } catch (e) {
+                        console.warn('[detail/removeFromLineup] failed:', e?.message || e);
+                        Alert.alert('Oops', "Couldn't remove. Try again?");
+                      }
+                    } },
+                  ]
+                );
+              }}
+            />
             <TouchableOpacity onPress={() => setMenuOpen(false)} style={menuStyles.cancel}>
               <Text style={menuStyles.cancelText}>Cancel</Text>
             </TouchableOpacity>
