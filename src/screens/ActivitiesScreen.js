@@ -144,7 +144,7 @@ export default function ActivitiesScreen({ navigation }) {
       Animated.spring(toastAnim, { toValue: 12, useNativeDriver: true, friction: 6 }),
       Animated.delay(1400),
       Animated.timing(toastAnim, { toValue: -80, duration: 250, useNativeDriver: true }),
-    ]).start();
+    ]).start(() => setToastMsg(''));
   };
   const toggleSave = (item) => {
     const isSaved = saved.includes(item.id);
