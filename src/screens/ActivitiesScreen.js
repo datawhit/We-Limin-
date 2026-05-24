@@ -1,16 +1,17 @@
-import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
+import React, { useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Animated,
   StyleSheet, FlatList, Alert,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppContext } from '../lib/AppContext';
 import { ACTIVITIES, COLORS, TIER } from '../lib/constants';
 import {
-  getUserActivities, upsertUserActivity, deleteUserActivity, setReaction,
+  supabase, getUserActivities, upsertUserActivity, deleteUserActivity, setReaction,
 } from '../lib/supabase';
 
 // ─── Design system primitives ─────────────────────────────
@@ -68,6 +69,8 @@ export default function ActivitiesScreen({ navigation }) {
   const accentText = profile.accent_text || '#2d5a00';
 
   useEffect(() => { loadCustom(); loadSaved(); }, []);
+  useEffect(() => { loadSaved(); }, [profile?.id]);
+  useFocusEffect(useCallback(() => { loadSaved(); }, [profile?.id]));
 
   const loadCustom = async () => {
     // Try Supabase first; fall back to AsyncStorage cache when remote
@@ -87,10 +90,22 @@ export default function ActivitiesScreen({ navigation }) {
   };
 
   const loadSaved = async () => {
+    if (!profile?.id) {
+      setSaved([]);
+      return;
+    }
     try {
-      const raw = await AsyncStorage.getItem(SAVED_KEY);
-      setSaved(raw ? JSON.parse(raw) : []);
-    } catch (e) { setSaved([]); }
+      const { data, error } = await supabase
+        .from('user_activities')
+        .select('activity_id')
+        .eq('profile_id', profile.id)
+        .eq('source', 'explore_saved');
+      if (error) throw error;
+      setSaved((data || []).map(r => r.activity_id));
+    } catch (e) {
+      console.warn('[activities/loadSaved] failed:', e?.message || e);
+      setSaved([]);
+    }
   };
 
   const persistCustom = async (next) => {
@@ -146,14 +161,37 @@ export default function ActivitiesScreen({ navigation }) {
       Animated.timing(toastAnim, { toValue: -80, duration: 250, useNativeDriver: true }),
     ]).start(() => setToastMsg(''));
   };
-  const toggleSave = (item) => {
+  const toggleSave = async (item) => {
     const isSaved = saved.includes(item.id);
     const next = isSaved
       ? saved.filter(id => id !== item.id)
       : [...saved, item.id];
+    const previousSaved = saved; // capture pre-change for revert on failure
     setSaved(next); // optimistic
-    AsyncStorage.setItem(SAVED_KEY, JSON.stringify(next)).catch(() => {});
-    showToast(isSaved ? 'Removed from Lineup' : 'Added to Lineup ✓');
+    try {
+      if (isSaved) {
+        const { error } = await supabase
+          .from('user_activities')
+          .delete()
+          .eq('profile_id', profile.id)
+          .eq('activity_id', item.id)
+          .eq('source', 'explore_saved');
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('user_activities').insert({
+          profile_id: profile.id,
+          activity_id: item.id,
+          source: 'explore_saved',
+          status: 'up_next',
+        });
+        if (error) throw error;
+      }
+      showToast(isSaved ? 'Removed from Lineup' : 'Added to Lineup ✓');
+    } catch (e) {
+      console.warn('[activities/toggleSave] failed:', e?.message || e);
+      setSaved(previousSaved); // revert optimistic update
+      showToast(isSaved ? "Couldn't remove" : "Couldn't save");
+    }
   };
 
   // Merge seeds with user_activities, overrides winning on shared ids.
