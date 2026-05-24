@@ -1,17 +1,17 @@
-import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
+import React, { useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Image, Animated, Easing,
   StyleSheet, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useFonts, Caveat_500Medium, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { AppContext } from '../lib/AppContext';
 import ProfileAvatar from '../components/ProfileAvatar';
 import {
   ACTIVITIES, COLORS, TIER, RATINGS, HOME_TAGLINES, TIERS, getTier,
 } from '../lib/constants';
-import { getMemories, getBadges, getAllMembers } from '../lib/supabase';
+import { getMemories, getBadges, getAllMembers, getUserActivities } from '../lib/supabase';
 import AvailabilityModal, { isMondayToday } from './AvailabilityModal';
 import SettingsModal from './SettingsModal';
 import EditProfileModal from './EditProfileModal';
@@ -188,37 +188,72 @@ export default function HomeScreen() {
     inputRange: [0, 1], outputRange: ['0deg', '360deg'],
   });
 
-  // ─── The Lineup data — 5 polaroids + "add a dream" tile ─────
-  const lineup = useMemo(() => {
-    const unearned = ACTIVITIES.filter(a => !myBadges.includes(a.id));
-    const picks = [];
-    if (spinPick && !myBadges.includes(spinPick.id)) {
-      picks.push({ activity: spinPick, pill: 'from spin' });
-    }
-    let i = 0;
-    while (picks.length < 5 && i < unearned.length) {
-      const a = unearned[i++];
-      if (picks.some(p => p.activity.id === a.id)) continue;
-      picks.push({
-        activity: a,
-        pill: picks.length === 0 ? 'up next' : picks.length === 1 ? 'next up' : null,
-      });
-    }
-    return picks;
-  }, [myBadges, spinPick]);
+  // ─── The Lineup data — fetched from user_activities ─────────
+  // The Lineup is the user's *saved* activities — dreams from Activity
+  // Detail, "+ saves" from Explore, and squad-plan invites that were
+  // accepted on Messages. spinPick is ephemeral and never bleeds in.
+  const [lineupRows, setLineupRows] = useState([]);
 
-  // Filter pills above the lineup carousel. Translates the picks' `pill`
-  // into the (source, status) signal the user thinks in terms of:
-  //   pill === 'up next' | 'next up' → up_next
-  //   pill === null                  → dreams
+  const fetchLineup = useCallback(async () => {
+    console.log('[home/fetchLineup] called, profile.id =', profile?.id);
+    if (!profile?.id) return;
+    try {
+      const rows = await getUserActivities(profile.id);
+      console.log('[home/fetchLineup] got', rows?.length ?? 0, 'rows for', profile.id, '→', rows);
+      setLineupRows(rows || []);
+    } catch (e) {
+      console.warn('[home] fetchLineup failed:', e?.message || e);
+    }
+  }, [profile?.id]);
+
+  useEffect(() => { fetchLineup(); }, [fetchLineup]);
+  useFocusEffect(useCallback(() => { fetchLineup(); }, [fetchLineup]));
+
+  // Join each row with its ACTIVITIES catalog entry. Drop rows whose
+  // activity_id doesn't resolve (defensive).
+  const lineup = useMemo(() => {
+    const pillBySource = {
+      dream:         'dream',
+      explore_saved: 'saved',
+      squad_plan:    'invited',
+    };
+    console.log('[home/lineup] joining', lineupRows.length, 'rows against', ACTIVITIES.length, 'activities');
+    const joined = lineupRows
+      .map(row => {
+        const activity = ACTIVITIES.find(a => a.id === row.activity_id);
+        if (!activity) {
+          console.warn('[home] lineup row has no matching activity:', row);
+          return null;
+        }
+        return {
+          activity,
+          source: row.source || null,
+          status: row.status || null,
+          pill:   pillBySource[row.source] || null,
+        };
+      })
+      .filter(Boolean);
+    console.log('[home/lineup] joined →', joined.length, 'items, sources:', joined.map(j => j.source));
+    return joined;
+  }, [lineupRows]);
+
+  // Filter pills above the lineup carousel — match against `source`:
+  //   'all'      → all rows
+  //   'up_next'  → source is 'explore_saved' or 'squad_plan'
+  //   'dreams'   → source is 'dream'
   const [lineupFilter, setLineupFilter] = useState('all');
   const filteredLineup = useMemo(() => {
-    switch (lineupFilter) {
-      case 'up_next': return lineup.filter(p => p.pill === 'up next' || p.pill === 'next up');
-      case 'dreams':  return lineup.filter(p => p.pill == null);
-      case 'all':
-      default:        return lineup;
-    }
+    console.log('[home/filtered] filter=', lineupFilter, 'lineup.length=', lineup.length);
+    const out = (() => {
+      switch (lineupFilter) {
+        case 'up_next': return lineup.filter(p => p.source === 'explore_saved' || p.source === 'squad_plan');
+        case 'dreams':  return lineup.filter(p => p.source === 'dream');
+        case 'all':
+        default:        return lineup;
+      }
+    })();
+    console.log('[home/filtered] result →', out.length, 'items');
+    return out;
   }, [lineup, lineupFilter]);
 
   return (
@@ -374,9 +409,19 @@ export default function HomeScreen() {
           </ScrollView>
 
           {/* 2-column polaroid grid (or per-filter empty state) */}
-          {lineupFilter !== 'all' && filteredLineup.length === 0 ? (
-            <View style={styles.lineupEmpty}>
-              <Text style={styles.lineupEmptyText}>{LINEUP_EMPTY_COPY[lineupFilter]}</Text>
+          {filteredLineup.length === 0 ? (
+            <View style={styles.grid}>
+              <View style={styles.gridCell}>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('Activities')}
+                  activeOpacity={0.85}
+                  style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
+                >
+                  <Text style={styles.addPlus}>+</Text>
+                  <Text style={styles.addDreamText}>add a dream</Text>
+                  <Underline size={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
             <View style={styles.grid}>
@@ -385,11 +430,7 @@ export default function HomeScreen() {
                   <Polaroid
                     emoji={p.activity.emoji}
                     title={p.activity.name}
-                    subtitle={
-                      p.pill === 'from spin'
-                        ? `From spin · Earns ${p.activity.badge}`
-                        : `Earns: ${p.activity.badge}`
-                    }
+                    subtitle={`Earns: ${p.activity.badge}`}
                     washiColor={POLAROID_WASHI[i % POLAROID_WASHI.length]}
                     emojiBg={POLAROID_EMOJI_BG[i % POLAROID_EMOJI_BG.length]}
                     tiltDeg={POLAROID_TILT[i % POLAROID_TILT.length]}

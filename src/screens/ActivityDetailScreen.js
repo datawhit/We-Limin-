@@ -144,14 +144,17 @@ export default function ActivityDetailScreen({ route, navigation }) {
     if (savingDream) return;
     setSavingDream(true);
     try {
+      console.log('[detail/saveAsDream] inserting profile.id=', profile.id, 'activity.id=', activity.id);
       const { error } = await supabase.from('user_activities').insert({
         profile_id: profile.id,
         activity_id: activity.id,
         source: 'dream',
         status: 'up_next',
       });
+      console.log('[detail/saveAsDream] insert returned, error=', error);
       if (error) throw error;
       await loadUa();
+      console.log('[detail/saveAsDream] loadUa complete');
       flashToast('added to your dreams 💭');
     } catch (e) {
       console.warn('[detail] saveAsDream failed:', e?.message || e);
