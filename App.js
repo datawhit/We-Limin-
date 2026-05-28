@@ -123,12 +123,17 @@ function RootNavigator() {
 
 // Pre-auth stack — only mounted when the user has neither a Supabase
 // session nor a legacy synthetic-id profile. W1.2b will replace the
-// Auth stub with the real magic-link / Apple / Google surface.
-function WelcomeStackNavigator() {
+// Auth screen's three buttons with real magic-link / Apple / Google
+// flows; until then, those buttons route to the existing SetupScreen
+// as a temporary bypass so the user can complete onboarding → Tabs.
+function WelcomeStackNavigator({ onSetupComplete }) {
   return (
     <WelcomeStack.Navigator screenOptions={{ headerShown: false }}>
       <WelcomeStack.Screen name="Welcome" component={WelcomeScreen} />
       <WelcomeStack.Screen name="Auth" component={AuthScreen} />
+      <WelcomeStack.Screen name="Setup">
+        {(props) => <SetupScreen {...props} onComplete={onSetupComplete} />}
+      </WelcomeStack.Screen>
     </WelcomeStack.Navigator>
   );
 }
@@ -306,7 +311,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <NavigationContainer>
-          <WelcomeStackNavigator />
+          <WelcomeStackNavigator onSetupComplete={handleSetupComplete} />
         </NavigationContainer>
       </SafeAreaProvider>
     );
