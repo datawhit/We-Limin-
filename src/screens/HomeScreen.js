@@ -8,11 +8,9 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useFonts, Caveat_500Medium, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { AppContext } from '../lib/AppContext';
 import ProfileAvatar from '../components/ProfileAvatar';
-import {
-  ACTIVITIES, COLORS, TIER, RATINGS, HOME_TAGLINES, TIERS, getTier,
-} from '../lib/constants';
+import { ACTIVITIES, COLORS, TIER } from '../lib/constants';
 import { getMemories, getBadges, getAllMembers, getUserActivities } from '../lib/supabase';
-import AvailabilityModal, { isMondayToday } from './AvailabilityModal';
+import AvailabilityModal from './AvailabilityModal';
 import SettingsModal from './SettingsModal';
 import EditProfileModal from './EditProfileModal';
 import TiersScreen from './TiersScreen';
@@ -20,12 +18,26 @@ import MessagesScreen from './MessagesScreen';
 import { getUnreadInviteCount } from '../lib/supabase';
 
 // ─── Design system primitives ─────────────────────────────
-import Polaroid from '../components/Polaroid';
 import WashiTape from '../components/WashiTape';
-import { Star, Heart, Sparkle, CurvedArrow, Underline } from '../components/Doodles';
-import { HANDWRITTEN_500, PASTELS } from '../lib/theme';
+import { Sparkle, CurvedArrow, Underline } from '../components/Doodles';
+import { HANDWRITTEN_500 } from '../lib/theme';
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// Time-of-day greeting helper. Falls back to "Hey" overnight.
+const timeOfDay = () => {
+  const h = new Date().getHours();
+  if (h >= 5  && h < 12) return { word: 'Morning',   icon: '☀️' };
+  if (h >= 12 && h < 17) return { word: 'Afternoon', icon: '🌴' };
+  if (h >= 17 && h < 22) return { word: 'Evening',   icon: '🌙' };
+  return { word: 'Hey', icon: '✨' };
+};
+
+// Source → status-pill label mapping used by the Soon Come strip.
+// (Visual layer only — no DB writes.)
+const SOON_COME_PILL = {
+  explore_saved: { label: 'soon',     bg: '#FBE7C6', fg: '#A86A1E' },
+  squad_plan:    { label: 'open',     bg: '#DDF1E2', fg: '#2F7A3D' },
+  dream:         { label: 'dreaming', bg: '#E4DEF6', fg: '#5B3FA3' },
+};
 
 // Safe TIER accessor — never crash on undefined / unknown tier values.
 const TIER_FALLBACK = { bg: COLORS.cream, label: '', text: COLORS.dark, dot: COLORS.muted };
@@ -43,19 +55,6 @@ const VIBES = [
 const POLAROID_WASHI    = ['pink',     'blue',    'coral',   'lavender', 'amber'];
 const POLAROID_EMOJI_BG = ['#FDEED7',  '#D6F0F4', '#FCDCD0', '#E4DEF6',  '#D6F0DD'];
 const POLAROID_TILT     = [-2,         2,         -1.5,      2,          -2.5];
-
-// Lineup filter pills. `source` / `status` are derived from each lineup
-// item's `pill` value (see below) since the existing lineup pipeline
-// builds from ACTIVITIES + spinPick rather than from user_activities.
-const LINEUP_FILTERS = [
-  { id: 'all',     label: 'all' },
-  { id: 'up_next', label: 'up next' },
-  { id: 'dreams',  label: 'dreams' },
-];
-const LINEUP_EMPTY_COPY = {
-  up_next: 'nothing on deck — go find some limes 🍋',
-  dreams:  "no dreams yet — what would you do if money wasn't a thing? ✨",
-};
 
 export default function HomeScreen() {
   // ─── PRESERVED: all hooks, state, effects, AppContext, navigation ───
@@ -75,22 +74,12 @@ export default function HomeScreen() {
   const [tiersOpen, setTiersOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const mondayNudge = isMondayToday();
 
   const refreshUnread = async () => {
     try { setUnreadCount(await getUnreadInviteCount(profile.id)); }
     catch { /* table may not exist yet — silent */ }
   };
   useEffect(() => { refreshUnread(); }, []);
-
-  const sessionTagline = useMemo(
-    () => HOME_TAGLINES[Math.floor(Math.random() * HOME_TAGLINES.length)],
-    []
-  );
-  const dayName = DAYS[new Date().getDay()];
-
-  const tier = getTier(myBadges.length);
-  const total = ACTIVITIES.length;
 
   // ─── Spin / vibe state ───
   const [vibe, setVibe] = useState(null);
@@ -157,32 +146,59 @@ export default function HomeScreen() {
     navigation.getParent()?.navigate('ActivityDetailModal', { activity, isModal: true });
   };
 
-  const limeFind = () => {
-    const pick = ACTIVITIES[Math.floor(Math.random() * ACTIVITIES.length)];
-    openDetail(pick);
-  };
-
-  const ratingOf = (label) => RATINGS.find(r => r.label === label) || RATINGS[0];
-
-  const recentMemories = memories.slice(0, 4);
-
-  // Count of memories posted by the current user — drives the
-  // "Memories" stat under the Next Unlock card.
+  // Count of memories posted by the current user.
   const myMemoryCount = useMemo(
     () => memories.filter(m => m.profile_id === profile.id).length,
     [memories, profile.id]
   );
 
-  // Leaderboard is computed but no longer rendered in the refreshed
-  // layout — kept memoed in case other call sites consume it.
-  const leaderboard = useMemo(() => {
-    return [...members]
-      .map(m => ({ ...m, count: m.badges?.[0]?.count || 0 }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6);
-  }, [members]);
+  // Memories the user logged in the current calendar month — drives
+  // the greeting subline ("You've made N memories this month").
+  const memoriesThisMonth = useMemo(() => {
+    const now = new Date();
+    return memories.filter(m => {
+      if (m.profile_id !== profile.id) return false;
+      const d = new Date(m.created_at);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }).length;
+  }, [memories, profile.id]);
 
-  const nextTier = tier.next;
+  // On This Day — most recent prior-year memory whose month+day matches today.
+  // Falls back to null if the user has any memories but none from prior years;
+  // the "no memories at all" case is handled by the empty-state CTA in render.
+  const onThisDayMemory = useMemo(() => {
+    const now = new Date();
+    const mm = now.getMonth();
+    const dd = now.getDate();
+    const yy = now.getFullYear();
+    const matches = memories
+      .filter(m => m.profile_id === profile.id)
+      .filter(m => {
+        const d = new Date(m.created_at);
+        return d.getMonth() === mm && d.getDate() === dd && d.getFullYear() < yy;
+      })
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return matches[0] || null;
+  }, [memories, profile.id]);
+
+  // Squad activity — preference order:
+  //   1. unread invite count > 0 → show invite teaser
+  //   2. most recent memory tagged with someone other than the current user
+  //   3. null (no card)
+  const squadActivity = useMemo(() => {
+    if (unreadCount > 0) {
+      return { kind: 'invite', count: unreadCount };
+    }
+    const recentOther = memories
+      .filter(m => m.profile_id && m.profile_id !== profile.id)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    if (recentOther) {
+      const member = members.find(x => x.id === recentOther.profile_id);
+      const activity = ACTIVITIES.find(a => a.id === recentOther.activity_id);
+      return { kind: 'memory', memory: recentOther, member, activity };
+    }
+    return null;
+  }, [unreadCount, memories, members, profile.id]);
 
   const spinSpin = spinRotation.interpolate({
     inputRange: [0, 1], outputRange: ['0deg', '360deg'],
@@ -237,25 +253,6 @@ export default function HomeScreen() {
     return joined;
   }, [lineupRows]);
 
-  // Filter pills above the lineup carousel — match against `source`:
-  //   'all'      → all rows
-  //   'up_next'  → source is 'explore_saved' or 'squad_plan'
-  //   'dreams'   → source is 'dream'
-  const [lineupFilter, setLineupFilter] = useState('all');
-  const filteredLineup = useMemo(() => {
-    console.log('[home/filtered] filter=', lineupFilter, 'lineup.length=', lineup.length);
-    const out = (() => {
-      switch (lineupFilter) {
-        case 'up_next': return lineup.filter(p => p.source === 'explore_saved' || p.source === 'squad_plan');
-        case 'dreams':  return lineup.filter(p => p.source === 'dream');
-        case 'all':
-        default:        return lineup;
-      }
-    })();
-    console.log('[home/filtered] result →', out.length, 'items');
-    return out;
-  }, [lineup, lineupFilter]);
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -277,12 +274,21 @@ export default function HomeScreen() {
             style={styles.identityRow}
             hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
           >
-            <ProfileAvatar profile={profile} size={36} ringColor={COLORS.coral} ringWidth={2} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={[styles.greeting, HAND_500 && { fontFamily: HAND_500 }]} numberOfLines={1}>
-                Hey {profile.name} ✨
+            <ProfileAvatar profile={profile} size={40} ringColor={COLORS.coral} ringWidth={2} />
+            <View style={{ marginLeft: 12, flex: 1 }}>
+              {(() => {
+                const tod = timeOfDay();
+                return (
+                  <Text style={[styles.greeting, HAND_500 && { fontFamily: HAND_500 }]} numberOfLines={1}>
+                    {tod.word}, {profile.name} {tod.icon}
+                  </Text>
+                );
+              })()}
+              <Text style={styles.subline} numberOfLines={1}>
+                {memoriesThisMonth === 0
+                  ? "let's collect your first memory this month 🍋"
+                  : `you've made ${memoriesThisMonth} ${memoriesThisMonth === 1 ? 'memory' : 'memories'} this month`}
               </Text>
-              <Text style={styles.subline}>{dayName} · {sessionTagline} 🌴</Text>
             </View>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setMessagesOpen(true)} style={styles.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -364,173 +370,186 @@ export default function HomeScreen() {
           })()}
         </View>
 
-        {/* ─── THE LINEUP ─── */}
-        <View style={styles.lineupCard}>
-          <Star size={14} style={{ left: 2, top: 220 }} />
-          <Heart size={14} color="#E83E8C" opacity={0.4} style={{ right: 12, top: 220 }} />
-          <Sparkle size={12} color="#9B6BD3" opacity={0.5} style={{ right: 4, bottom: 16 }} />
-
-          <View style={styles.lineupHead}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.lineupEyebrow}>THE LINEUP 🍋</Text>
-              <Text style={[styles.lineupTitle, HAND_500 && { fontFamily: HAND_500 }]}>things i'm chasing</Text>
-              <Text style={styles.lineupSub}>{myBadges.length} of {total} lived · keep going 🌿</Text>
-            </View>
-            <TouchableOpacity onPress={() => navigation.navigate('Activities')} style={styles.addLineupBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={styles.addLineupText}>+ add</Text>
-              <Underline size={32} style={{ right: 0, top: 18 }} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Filter pills (above the carousel) */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-            style={{ marginBottom: 14, marginHorizontal: -2 }}
-          >
-            {LINEUP_FILTERS.map(f => {
-              const on = lineupFilter === f.id;
-              return (
-                <TouchableOpacity
-                  key={f.id}
-                  onPress={() => setLineupFilter(f.id)}
-                  activeOpacity={0.85}
-                  style={styles.filterPillWrap}
-                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-                >
-                  {on && <WashiTape color="amber" width="78%" height={12} rotation={-2} opacity={0.65} style={{ top: 12, left: '11%' }} />}
-                  <View style={[styles.filterPill, on ? styles.filterPillOn : styles.filterPillOff]}>
-                    <Text style={[styles.filterPillText, on ? styles.filterPillTextOn : styles.filterPillTextOff]}>{f.label}</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* 2-column polaroid grid (or per-filter empty state) */}
-          {filteredLineup.length === 0 ? (
-            <View style={styles.grid}>
-              <View style={styles.gridCell}>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('Activities')}
-                  activeOpacity={0.85}
-                  style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
-                >
-                  <Text style={styles.addPlus}>+</Text>
-                  <Text style={styles.addDreamText}>add a dream</Text>
-                  <Underline size={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.grid}>
-              {filteredLineup.map((p, i) => (
-                <View key={p.activity.id} style={styles.gridCell}>
-                  <Polaroid
-                    emoji={p.activity.emoji}
-                    title={p.activity.name}
-                    subtitle={`Earns: ${p.activity.badge}`}
-                    washiColor={POLAROID_WASHI[i % POLAROID_WASHI.length]}
-                    emojiBg={POLAROID_EMOJI_BG[i % POLAROID_EMOJI_BG.length]}
-                    tiltDeg={POLAROID_TILT[i % POLAROID_TILT.length]}
-                    pill={p.pill}
-                    onPress={() => openDetail(p.activity)}
-                  />
-                </View>
-              ))}
-              {/* Add a dream tile — only shown on the "all" view */}
-              {lineupFilter === 'all' && (
-                <View style={styles.gridCell}>
-                  <TouchableOpacity
-                    onPress={() => navigation.navigate('Activities')}
-                    activeOpacity={0.85}
-                    style={[styles.polaroidEmpty, { transform: [{ rotate: '1.5deg' }] }]}
-                  >
-                    <Text style={styles.addPlus}>+</Text>
-                    <Text style={styles.addDreamText}>add a dream</Text>
-                    <Underline size={70} color="#9B6BD3" style={{ bottom: 22, alignSelf: 'center', left: '50%', marginLeft: -35 }} />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-
-        {/* ─── Next Unlock ─── */}
-        {nextTier ? (
-          <View style={styles.unlockCard}>
-            <View style={styles.unlockTopRow}>
-              <View style={styles.lockedBadge}>
-                <Text style={{ fontSize: 28, opacity: 0.5 }}>{nextTier.emoji}</Text>
-                <View style={styles.lockBadge}><Text style={{ fontSize: 10 }}>🔒</Text></View>
-              </View>
-              <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={styles.unlockEyebrow}>NEXT UNLOCK</Text>
-                <Text style={styles.unlockName}>{nextTier.name} {nextTier.emoji}</Text>
-                <Text style={styles.unlockSub}>{tier.badgesToNext} more adventures to go</Text>
-              </View>
-              <Text style={styles.unlockPalm}>🌴</Text>
-              <Sparkle size={14} color={COLORS.coral} opacity={0.9} style={{ right: 90, top: -2 }} />
-              <TouchableOpacity onPress={() => setTiersOpen(true)} style={styles.unlockCta}>
-                <Text style={styles.unlockCtaText}>See all tiers</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Inline stats — pulled from user data */}
-            <View style={styles.unlockStatsRow}>
-              <Text style={styles.unlockStat}>
-                <Text style={styles.unlockStatNum}>{myBadges.length}</Text> Adventures
-              </Text>
-              <Text style={styles.unlockStatDot}> · </Text>
-              <Text style={styles.unlockStat}>
-                <Text style={styles.unlockStatNum}>{myMemoryCount}</Text> Memories
-              </Text>
-              <Text style={styles.unlockStatDot}> · </Text>
-              <Text style={styles.unlockStat}>
-                <Text style={styles.unlockStatNum}>{myBadges.length}</Text> Badges
-              </Text>
-            </View>
-          </View>
-        ) : null}
-
-        {/* ─── Squad Memories ─── */}
+        {/* ─── SOON COME strip ─── */}
+        {/* Compact horizontal preview of the user's lineup. The full
+            view (filters, dream-tile, all sources) still lives on the
+            Activities screen; "see all" deep-links there. */}
         <View style={styles.section}>
           <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>📸 Squad Memories</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Scrapbook')}>
-              <Text style={styles.linkText}>See all</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.sectionHeadline, HAND_500 && { fontFamily: HAND_500 }]}>soon come 🍋</Text>
+              <Text style={styles.sectionSub}>your plans, your way</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Activities')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.linkText}>see all</Text>
             </TouchableOpacity>
           </View>
 
-          {recentMemories.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyEmoji}>📷</Text>
-              <Text style={styles.emptyText}>No memories yet — bus' a lime</Text>
-            </View>
+          {lineup.length === 0 ? (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Activities')}
+              activeOpacity={0.85}
+              style={styles.soonComeEmpty}
+            >
+              <Text style={styles.soonComeEmptyPlus}>+</Text>
+              <Text style={styles.soonComeEmptyText}>nothing on deck — go find some limes</Text>
+            </TouchableOpacity>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 22 }}>
-              {recentMemories.map((m, i) => {
-                const a = ACTIVITIES.find(x => x.id === m.activity_id);
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.soonComeRow}
+            >
+              {lineup.slice(0, 3).map((p, i) => {
+                const pill = SOON_COME_PILL[p.source] || SOON_COME_PILL.explore_saved;
+                const washi = POLAROID_WASHI[i % POLAROID_WASHI.length];
+                const tilt  = POLAROID_TILT[i % POLAROID_TILT.length];
+                const bg    = POLAROID_EMOJI_BG[i % POLAROID_EMOJI_BG.length];
                 return (
-                  <View key={m.id} style={styles.memThumb}>
-                    {m.photo_url ? (
-                      <Image source={{ uri: m.photo_url }} style={styles.memThumbImg} />
-                    ) : (
-                      <View style={[styles.memThumbImg, { backgroundColor: tierOf(a?.tier).bg, alignItems: 'center', justifyContent: 'center' }]}>
-                        <Text style={{ fontSize: 32 }}>{a?.emoji || '📸'}</Text>
-                      </View>
-                    )}
-                    {i === 0 && <Star size={14} color="#fff" opacity={0.9} style={{ left: 8, top: 8 }} />}
-                    {i === 1 && <Heart size={14} color="#fff" opacity={0.9} style={{ right: 10, bottom: 10 }} />}
-                    {i === 2 && <Text style={styles.thumbCrown}>👑</Text>}
-                    {i === 3 && <Sparkle size={14} color="#fff" opacity={0.9} style={{ left: 10, top: 10 }} />}
-                  </View>
+                  <TouchableOpacity
+                    key={p.activity.id}
+                    activeOpacity={0.85}
+                    onPress={() => openDetail(p.activity)}
+                    style={[styles.soonComeCard, { transform: [{ rotate: `${tilt}deg` }] }]}
+                  >
+                    <WashiTape color={washi} width="46%" rotation={-3} style={{ top: -8, left: '27%' }} />
+                    <View style={[styles.soonComeEmojiBox, { backgroundColor: bg }]}>
+                      <Text style={{ fontSize: 32 }}>{p.activity.emoji}</Text>
+                    </View>
+                    <Text style={styles.soonComeTitle} numberOfLines={1}>{p.activity.name}</Text>
+                    {p.activity.location ? (
+                      <Text style={styles.soonComeLoc} numberOfLines={1}>{p.activity.location}</Text>
+                    ) : null}
+                    <View style={[styles.soonComePill, { backgroundColor: pill.bg }]}>
+                      <Text style={[styles.soonComePillText, { color: pill.fg }]}>{pill.label}</Text>
+                    </View>
+                  </TouchableOpacity>
                 );
               })}
             </ScrollView>
           )}
         </View>
+
+        {/* ─── ON THIS DAY ─── */}
+        {(() => {
+          // Three states:
+          //   - user has zero memories → "first memory" CTA
+          //   - user has memories AND a prior-year match → flashback card
+          //   - user has memories but no prior-year match → hide section
+          if (myMemoryCount === 0) {
+            return (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <Text style={[styles.sectionHeadline, HAND_500 && { fontFamily: HAND_500 }]}>your first lime</Text>
+                  <Text style={styles.sectionSub} />
+                </View>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('Activities')}
+                  activeOpacity={0.85}
+                  style={styles.firstMemoryCard}
+                >
+                  <Text style={styles.firstMemoryEmoji}>📸</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.firstMemoryTitle}>capture your first memory</Text>
+                    <Text style={styles.firstMemorySub}>every scrapbook starts somewhere — pick a lime, live it, post it</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            );
+          }
+
+          if (!onThisDayMemory) return null;
+
+          const a = ACTIVITIES.find(x => x.id === onThisDayMemory.activity_id);
+          const d = new Date(onThisDayMemory.created_at);
+          const dateStr = d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+          const years = new Date().getFullYear() - d.getFullYear();
+          const yearStr = years === 1 ? '1 year ago' : `${years} years ago`;
+
+          return (
+            <View style={styles.section}>
+              <View style={styles.sectionHead}>
+                <Text style={[styles.sectionHeadline, HAND_500 && { fontFamily: HAND_500 }]}>on this day</Text>
+                <Text style={styles.sectionSub}>{yearStr}</Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => { try { navigation.navigate('Scrapbook'); } catch {} }}
+                style={styles.onThisDayCard}
+              >
+                <View style={styles.onThisDayThumb}>
+                  {onThisDayMemory.photo_url ? (
+                    <Image source={{ uri: onThisDayMemory.photo_url }} style={styles.onThisDayThumbImg} />
+                  ) : (
+                    <View style={[styles.onThisDayThumbImg, { backgroundColor: tierOf(a?.tier).bg, alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ fontSize: 28 }}>{a?.emoji || '📸'}</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={styles.onThisDayDate}>{dateStr}</Text>
+                  <Text style={styles.onThisDayTitle} numberOfLines={1}>{a?.name || 'A memory'}</Text>
+                  <Text style={styles.onThisDayCaption} numberOfLines={2}>
+                    {onThisDayMemory.caption || onThisDayMemory.note || 'tap to relive it'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
+
+        {/* ─── SQUAD ACTIVITY ─── */}
+        {squadActivity && (
+          <View style={styles.section}>
+            {squadActivity.kind === 'invite' ? (
+              <TouchableOpacity
+                onPress={() => setMessagesOpen(true)}
+                activeOpacity={0.85}
+                style={styles.squadCard}
+              >
+                <View style={styles.squadAvatarFallback}>
+                  <Text style={{ fontSize: 22 }}>📬</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.squadEyebrow}>YOUR SQUAD</Text>
+                  <Text style={styles.squadTitle} numberOfLines={2}>
+                    you have {squadActivity.count} new {squadActivity.count === 1 ? 'invite' : 'invites'} waiting
+                  </Text>
+                </View>
+                <View style={styles.squadCta}>
+                  <Text style={styles.squadCtaText}>open</Text>
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={() => { try { navigation.navigate('Scrapbook'); } catch {} }}
+                activeOpacity={0.85}
+                style={styles.squadCard}
+              >
+                {squadActivity.member ? (
+                  <ProfileAvatar profile={squadActivity.member} size={44} ringColor={COLORS.palmGreen} ringWidth={2} />
+                ) : (
+                  <View style={styles.squadAvatarFallback}>
+                    <Text style={{ fontSize: 22 }}>👥</Text>
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.squadEyebrow}>SQUAD MOMENT</Text>
+                  <Text style={styles.squadTitle} numberOfLines={2}>
+                    {(squadActivity.member?.name || 'someone in your lime') + ' just lived '}
+                    <Text style={{ fontWeight: '700' }}>{squadActivity.activity?.name || 'a moment'}</Text>
+                  </Text>
+                </View>
+                <View style={styles.squadCta}>
+                  <Text style={styles.squadCtaText}>view</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {/* ─── Modals (preserved) ─── */}
@@ -548,19 +567,6 @@ export default function HomeScreen() {
       />
     </SafeAreaView>
   );
-}
-
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(iso).toLocaleDateString();
 }
 
 const styles = StyleSheet.create({
@@ -628,104 +634,91 @@ const styles = StyleSheet.create({
   spinResultCta: { backgroundColor: COLORS.coral, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
   spinResultCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  // The Lineup card
-  lineupCard: {
-    backgroundColor: '#FAF1DD', borderRadius: 28, padding: 22, marginBottom: 22,
-    borderWidth: 1, borderColor: '#EEDFB3', position: 'relative', overflow: 'hidden',
+  // ─── Sections ──────────────────────────────────────────────
+  section: { marginBottom: 26 },
+  sectionHead: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 12 },
+  sectionHeadline: {
+    fontSize: 28, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 32,
+    fontWeight: '700', // Caveat fallback
   },
-  lineupHead: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
-  lineupEyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 2, color: COLORS.deepCoral },
-  lineupTitle: { fontSize: 26, color: COLORS.dark, marginTop: 2, letterSpacing: -0.4, lineHeight: 32 },
-  lineupSub: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 4 },
-  addLineupBtn: { paddingTop: 6, paddingRight: 0, position: 'relative' },
-  addLineupText: { color: COLORS.coral, fontSize: 16, fontWeight: '700' },
-
-  // Lineup filter pills
-  filterRow: { gap: 8, alignItems: 'center', paddingHorizontal: 2, paddingVertical: 4 },
-  filterPillWrap: { position: 'relative', justifyContent: 'center' },
-  filterPill: {
-    height: 36, borderRadius: 18,
-    paddingHorizontal: 14,
-    alignItems: 'center', justifyContent: 'center',
-    minWidth: 56,
-  },
-  filterPillOn:  { backgroundColor: '#E8704F' },
-  filterPillOff: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#EBE2D0' },
-  filterPillText: { fontSize: 13, letterSpacing: 0.1 },
-  filterPillTextOn:  { color: '#fff', fontWeight: '500' },
-  filterPillTextOff: { color: COLORS.dark, fontWeight: '400' },
-
-  // Lineup per-filter empty state
-  lineupEmpty: {
-    backgroundColor: PASTELS.lavenderBg,
-    borderRadius: 14,
-    height: 60,
-    alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  lineupEmptyText: { fontSize: 12, color: '#888', fontStyle: 'italic', textTransform: 'lowercase', textAlign: 'center' },
-
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 22 },
-  gridCell: { width: '47%' },
-
-  polaroidEmpty: {
-    minHeight: 184,
-    borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.18)',
-    alignItems: 'center', justifyContent: 'center',
-    position: 'relative',
-  },
-  addPlus: { fontSize: 36, color: '#888', marginBottom: 6 },
-  addDreamText: { fontSize: 13, color: '#666', fontWeight: '600' },
-
-  // Next Unlock — light coral-bordered card
-  // Outer is a column so we can stack the existing horizontal row
-  // on top of the new inline stats row.
-  unlockCard: {
-    backgroundColor: COLORS.cream, borderRadius: 24, padding: 16, marginBottom: 22,
-    borderWidth: 1, borderColor: COLORS.cardBorder,
-    borderLeftWidth: 4, borderLeftColor: COLORS.coral,
-    position: 'relative', overflow: 'hidden',
-  },
-  unlockTopRow: { flexDirection: 'row', alignItems: 'center' },
-
-  unlockStatsRow: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'baseline',
-    marginTop: 14, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.06)',
-  },
-  unlockStat: { fontSize: 11, color: '#888' },
-  unlockStatNum: { fontSize: 11, fontWeight: '700', color: COLORS.dark },
-  unlockStatDot: { fontSize: 11, color: '#ccc' },
-  lockedBadge: {
-    width: 54, height: 54, borderRadius: 14, backgroundColor: '#fff',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: COLORS.cardBorder, borderStyle: 'dashed',
-    position: 'relative',
-  },
-  lockBadge: {
-    position: 'absolute', bottom: -4, right: -4,
-    width: 22, height: 22, borderRadius: 11, backgroundColor: COLORS.coral,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff',
-  },
-  unlockEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: COLORS.deepCoral },
-  unlockName: { fontSize: 16, fontWeight: '700', color: COLORS.dark, marginTop: 4, letterSpacing: -0.2 },
-  unlockSub: { fontSize: 12, color: '#888', marginTop: 2 },
-  unlockPalm: { position: 'absolute', right: 110, top: 8, fontSize: 26, transform: [{ rotate: '12deg' }] },
-  unlockCta: { backgroundColor: COLORS.coral, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 11 },
-  unlockCtaText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-
-  // Sections
-  section: { marginBottom: 22 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
+  sectionSub: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 2 },
   linkText: { fontSize: 13, color: COLORS.coral, fontWeight: '700' },
 
-  // Memory thumbnails
-  memThumb: { width: 116, height: 116, borderRadius: 16, overflow: 'hidden', position: 'relative', backgroundColor: '#F0EAD8' },
-  memThumbImg: { width: '100%', height: '100%' },
-  thumbCrown: { position: 'absolute', top: 6, left: 8, fontSize: 16 },
+  // ─── Soon Come strip ───────────────────────────────────────
+  soonComeRow: { gap: 14, paddingRight: 22, paddingTop: 10, paddingBottom: 6 },
+  soonComeCard: {
+    width: 156,
+    backgroundColor: '#fff', borderRadius: 12,
+    paddingTop: 16, paddingHorizontal: 10, paddingBottom: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08, shadowRadius: 6, elevation: 3,
+    position: 'relative',
+  },
+  soonComeEmojiBox: {
+    width: '100%', aspectRatio: 1.25, borderRadius: 6,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 8,
+  },
+  soonComeTitle: { fontSize: 13, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
+  soonComeLoc:   { fontSize: 11, color: '#888', marginTop: 2 },
+  soonComePill:  {
+    alignSelf: 'flex-start', marginTop: 8,
+    paddingVertical: 3, paddingHorizontal: 9, borderRadius: 999,
+  },
+  soonComePillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
 
-  emptyCard: { backgroundColor: '#fff', borderRadius: 20, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: COLORS.cardBorder },
-  emptyEmoji: { fontSize: 36, marginBottom: 10 },
-  emptyText: { color: '#999', fontSize: 13 },
+  soonComeEmpty: {
+    backgroundColor: '#fff',
+    borderRadius: 16, paddingVertical: 26, paddingHorizontal: 22,
+    borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  soonComeEmptyPlus: { fontSize: 28, color: '#888', marginBottom: 4 },
+  soonComeEmptyText: { fontSize: 13, color: '#666', fontStyle: 'italic' },
+
+  // ─── On This Day ────────────────────────────────────────────
+  onThisDayCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#EFE3F5', // soft lavender, mockup-aligned
+    borderRadius: 18, padding: 14,
+  },
+  onThisDayThumb: {
+    width: 64, height: 64, borderRadius: 10, overflow: 'hidden',
+    backgroundColor: '#fff',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
+  },
+  onThisDayThumbImg: { width: '100%', height: '100%' },
+  onThisDayDate:    { fontSize: 11, color: '#7A5C9C', fontWeight: '700', letterSpacing: 0.3 },
+  onThisDayTitle:   { fontSize: 15, color: COLORS.dark, fontWeight: '700', marginTop: 2, letterSpacing: -0.2 },
+  onThisDayCaption: { fontSize: 12, color: '#6F6685', fontStyle: 'italic', marginTop: 2, lineHeight: 16 },
+
+  // First-memory CTA — replaces On This Day when user has zero memories
+  firstMemoryCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FCEDC9',
+    borderRadius: 18, padding: 16,
+  },
+  firstMemoryEmoji: { fontSize: 30, marginRight: 14 },
+  firstMemoryTitle: { fontSize: 15, fontWeight: '700', color: COLORS.dark, letterSpacing: -0.2 },
+  firstMemorySub:   { fontSize: 12, color: '#7A6B3F', fontStyle: 'italic', marginTop: 2, lineHeight: 16 },
+
+  // ─── Squad activity ────────────────────────────────────────
+  squadCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#DDF1E2',
+    borderRadius: 18, padding: 14,
+  },
+  squadAvatarFallback: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: COLORS.palmGreen,
+  },
+  squadEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6, color: '#2F7A3D' },
+  squadTitle:   { fontSize: 14, color: COLORS.dark, marginTop: 3, letterSpacing: -0.15, lineHeight: 19 },
+  squadCta: {
+    backgroundColor: COLORS.palmGreen, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 11,
+    marginLeft: 10,
+  },
+  squadCtaText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
 });
