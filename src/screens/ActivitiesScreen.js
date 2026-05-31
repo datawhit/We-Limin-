@@ -10,6 +10,7 @@ import { useFonts, Caveat_500Medium } from '@expo-google-fonts/caveat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppContext } from '../lib/AppContext';
 import { ACTIVITIES, COLORS, TIER } from '../lib/constants';
+import { VIBES, activitiesForVibe } from '../lib/vibes';
 import {
   supabase, getUserActivities, upsertUserActivity, deleteUserActivity, setReaction,
 } from '../lib/supabase';
@@ -55,6 +56,10 @@ export default function ActivitiesScreen({ navigation }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingActivity, setEditingActivity] = useState(null); // null = creating
   const [menuFor, setMenuFor] = useState(null); // ⋮ menu target
+  // selectedVibe: null = grid mode (vibe collection landing).
+  // Vibe object = detail mode (curated activity list for that vibe).
+  // 'all-activities' = pseudo-vibe representing the "see all" escape.
+  const [selectedVibe, setSelectedVibe] = useState(null);
   const insets = useSafeAreaInsets();
 
   // NEW: lineup-save state + toast feedback
@@ -206,19 +211,41 @@ export default function ActivitiesScreen({ navigation }) {
     return [...pinned, ...unpinned];
   }, [custom]);
 
-  const filtered = useMemo(() => {
-    let list = all;
-    if (filter !== 'all') list = list.filter(a => a.tier === filter);
+  // Render-mode flags. The screen has three states:
+  //   - grid:        no vibe selected AND no query → vibe collection
+  //   - flat-search: no vibe selected BUT query active → flat results
+  //   - detail:      a vibe (or the 'all-activities' escape) is selected
+  const inVibeDetail = !!selectedVibe;
+  const inGridSearch = !inVibeDetail && !!query.trim();
+  const inVibeGrid   = !inVibeDetail && !inGridSearch;
+
+  // Activities to render when we're in a list-rendering mode.
+  // - Detail with a real vibe: curated activities for that vibe.
+  // - Detail with 'all-activities': every activity.
+  // - Flat-search: name-match across everything; tier filter still applies.
+  const displayed = useMemo(() => {
+    if (inVibeGrid) return [];
+    let list;
+    if (inVibeDetail) {
+      list = selectedVibe === 'all-activities'
+        ? all
+        : activitiesForVibe(selectedVibe, all);
+    } else {
+      list = all;
+    }
+    if (inGridSearch && filter !== 'all') {
+      list = list.filter(a => a.tier === filter);
+    }
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(a => a.name.toLowerCase().includes(q));
     }
     return list;
-  }, [filter, query, all]);
+  }, [all, query, filter, selectedVibe, inVibeGrid, inVibeDetail, inGridSearch]);
 
+  // Tier filter counts — only rendered during grid-mode search, so the
+  // base is the query-matched flat result set across all activities.
   const filters = useMemo(() => {
-    // "All N" updates with the current search query so the counts
-    // reflect what the user sees.
     const base = query.trim()
       ? all.filter(a => a.name.toLowerCase().includes(query.toLowerCase()))
       : all;
@@ -291,6 +318,23 @@ export default function ActivitiesScreen({ navigation }) {
     );
   };
 
+  // Resolve the active-vibe meta object once for the detail header.
+  // The 'all-activities' pseudo-vibe uses a synthetic header so it
+  // matches the visual rhythm without polluting the VIBES list.
+  const activeVibeMeta = !inVibeDetail
+    ? null
+    : selectedVibe === 'all-activities'
+      ? { label: 'all activities', emoji: '🍋', moodLine: 'every lime, every vibe', fg: COLORS.dark, bg: '#FDEED7' }
+      : selectedVibe;
+
+  // Back from detail mode also clears the active query — landing back
+  // on the vibe grid with a stale search would feel jarring.
+  const exitDetail = () => {
+    setSelectedVibe(null);
+    setQuery('');
+    setFilter('all');
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       {/* Floating toast */}
@@ -303,104 +347,173 @@ export default function ActivitiesScreen({ navigation }) {
         </Animated.View>
       )}
 
-      {/* ─── Header ─── */}
-      <View style={styles.header}>
-        <View style={styles.titleHeaderRow}>
-          <Text style={[styles.title, HAND_500 && { fontFamily: HAND_500 }]}>explore</Text>
-          <Sparkle size={20} color={COLORS.palmGreen} opacity={0.55} style={{ left: 10, top: 6 }} />
-          <Star size={11} color={COLORS.coral} opacity={0.5} style={{ right: 4, top: 4 }} />
+      {/* ─── Header — varies by mode ─── */}
+      {inVibeDetail ? (
+        <View style={styles.detailHeader}>
+          <TouchableOpacity
+            onPress={exitDetail}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.backBtn}
+          >
+            <Text style={styles.chev}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.detailTitleWrap}>
+            <Text style={[styles.detailTitle, HAND_500 && { fontFamily: HAND_500 }]} numberOfLines={1}>
+              {activeVibeMeta.label} {activeVibeMeta.emoji}
+            </Text>
+            <Text style={styles.detailMood} numberOfLines={1}>{activeVibeMeta.moodLine}</Text>
+          </View>
         </View>
-        <Text style={styles.subtitle}>find ideas, limes, and inspo</Text>
-      </View>
+      ) : (
+        <View style={styles.header}>
+          <View style={styles.titleHeaderRow}>
+            <Text style={[styles.title, HAND_500 && { fontFamily: HAND_500 }]}>explore</Text>
+            <Sparkle size={20} color={COLORS.palmGreen} opacity={0.55} style={{ left: 10, top: 6 }} />
+            <Star size={11} color={COLORS.coral} opacity={0.5} style={{ right: 4, top: 4 }} />
+          </View>
+          <Text style={styles.subtitle}>find ideas, limes, and inspo</Text>
+        </View>
+      )}
 
-      {/* ─── Search ─── */}
+      {/* ─── Search — present in both modes ─── */}
       <View style={styles.searchWrap}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="search activities, places, vibes..."
+          placeholder={inVibeDetail ? `search within ${activeVibeMeta.label}...` : 'search activities, places, vibes...'}
           placeholderTextColor="#bbb"
           style={styles.search}
         />
       </View>
 
-      {/* ─── Filter pills ─── */}
-      <View style={styles.filterRow}>
+      {/* ─── Tier filter pills — only during grid-mode search ─── */}
+      {inGridSearch && (
+        <View style={styles.filterRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 22, gap: 10, alignItems: 'center' }}
+          >
+            {filters.map(f => {
+              const on = filter === f.id;
+              return (
+                <View key={f.id} style={styles.filterChipWrap}>
+                  {on && (
+                    <WashiTape
+                      color="amber"
+                      width={110}
+                      height={30}
+                      rotation={-2}
+                      opacity={0.7}
+                      style={{ top: 3, left: -6 }}
+                    />
+                  )}
+                  <TouchableOpacity
+                    onPress={() => setFilter(f.id)}
+                    style={[styles.filterChip, on && styles.filterChipOn]}
+                  >
+                    <Text style={[styles.filterText, on && styles.filterTextOn]}>{f.label}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ─── Content — grid view OR activity list ─── */}
+      {inVibeGrid ? (
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 22, gap: 10, alignItems: 'center' }}
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.gridScroll}
+          showsVerticalScrollIndicator={false}
         >
-          {filters.map(f => {
-            const on = filter === f.id;
-            return (
-              <View key={f.id} style={styles.filterChipWrap}>
-                {on && (
-                  <WashiTape
-                    color="amber"
-                    width={110}
-                    height={30}
-                    rotation={-2}
-                    opacity={0.7}
-                    style={{ top: 3, left: -6 }}
-                  />
-                )}
-                <TouchableOpacity
-                  onPress={() => setFilter(f.id)}
-                  style={[styles.filterChip, on && styles.filterChipOn]}
-                >
-                  <Text style={[styles.filterText, on && styles.filterTextOn]}>{f.label}</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          })}
+          <Text style={[styles.gridPrompt, HAND_500 && { fontFamily: HAND_500 }]}>
+            what vibe are we on?
+          </Text>
+
+          <View style={styles.vibeGrid}>
+            {VIBES.map(v => (
+              <TouchableOpacity
+                key={v.id}
+                onPress={() => setSelectedVibe(v)}
+                activeOpacity={0.85}
+                style={styles.vibeCell}
+              >
+                <View style={[styles.vibeTile, { backgroundColor: v.bg }]}>
+                  <Text style={styles.vibeTileEmoji}>{v.emoji}</Text>
+                </View>
+                <Text style={styles.vibeCellLabel} numberOfLines={1}>{v.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Escape hatch — browse everything */}
+          <TouchableOpacity
+            onPress={() => setSelectedVibe('all-activities')}
+            activeOpacity={0.85}
+            style={styles.seeAllLink}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.seeAllText}>or see all {ACTIVITIES.length} activities →</Text>
+          </TouchableOpacity>
+
+          <View pointerEvents="none" style={styles.gridFooterAccents}>
+            <Sparkle size={12} color={COLORS.amber} opacity={0.55} style={{ right: 40, top: 14 }} />
+            <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: 36, top: 44 }} />
+          </View>
         </ScrollView>
-      </View>
+      ) : (
+        <FlatList
+          style={{ flex: 1 }}
+          data={displayed}
+          keyExtractor={(i) => String(i.id)}
+          contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 140 }}
+          renderItem={renderItem}
+          ListHeaderComponent={
+            inVibeDetail ? (
+              <Text style={styles.ideasEyebrow}>ideas to try</Text>
+            ) : (
+              <View pointerEvents="none" style={styles.listAccents}>
+                <Sparkle size={14} color={COLORS.amber} opacity={0.55} style={{ right: -4, top: 2 }} />
+                <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: -6, top: 28 }} />
+              </View>
+            )
+          }
+          ListFooterComponent={
+            <View pointerEvents="none" style={styles.listFooterAccents}>
+              <CurvedArrow size={42} color={COLORS.coral} opacity={0.45} style={{ left: 18, top: 14, transform: [{ rotate: '90deg' }] }} />
+              <Sparkle size={12} color={COLORS.amber} opacity={0.55} style={{ right: 40, top: 28 }} />
+              <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: '50%', top: 60 }} />
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={{ fontSize: 36, marginBottom: 10 }}>🔍</Text>
+              <Text style={{ color: '#aaa' }}>nothing matches that</Text>
+            </View>
+          }
+        />
+      )}
 
-      {/* ─── List ─── */}
-      <FlatList
-        style={{ flex: 1 }}
-        data={filtered}
-        keyExtractor={(i) => String(i.id)}
-        contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 140 }}
-        renderItem={renderItem}
-        ListHeaderComponent={
-          <View pointerEvents="none" style={styles.listAccents}>
-            <Sparkle size={14} color={COLORS.amber} opacity={0.55} style={{ right: -4, top: 2 }} />
-            <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: -6, top: 28 }} />
-          </View>
-        }
-        ListFooterComponent={
-          <View pointerEvents="none" style={styles.listFooterAccents}>
-            <CurvedArrow size={42} color={COLORS.coral} opacity={0.45} style={{ left: 18, top: 14, transform: [{ rotate: '90deg' }] }} />
-            <Sparkle size={12} color={COLORS.amber} opacity={0.55} style={{ right: 40, top: 28 }} />
-            <Star size={11} color={COLORS.palmGreen} opacity={0.5} style={{ left: '50%', top: 60 }} />
-          </View>
-        }
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={{ fontSize: 36, marginBottom: 10 }}>🔍</Text>
-            <Text style={{ color: '#aaa' }}>nothing matches that</Text>
-          </View>
-        }
-      />
-
-      {/* ─── FAB ─── */}
-      <TouchableOpacity
-        onPress={() => { setEditingActivity(null); setModalOpen(true); }}
-        style={[
-          styles.fab,
-          {
-            bottom: 24 + (insets.bottom || 0),
-            backgroundColor: COLORS.coral,
-            transform: [{ rotate: '-3deg' }],
-          },
-        ]}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.fabPlus}>＋</Text>
-      </TouchableOpacity>
+      {/* ─── FAB — only in detail mode (grid mode has no concept of "add a vibe" yet) ─── */}
+      {inVibeDetail && (
+        <TouchableOpacity
+          onPress={() => { setEditingActivity(null); setModalOpen(true); }}
+          style={[
+            styles.fab,
+            {
+              bottom: 24 + (insets.bottom || 0),
+              backgroundColor: COLORS.coral,
+              transform: [{ rotate: '-3deg' }],
+            },
+          ]}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.fabPlus}>＋</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Create / Edit modal */}
       <ActivityEditorModal
@@ -703,11 +816,65 @@ function EditorHeader({ title, onClose }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.cream },
 
-  // Header
+  // Header — grid mode
   header: { paddingHorizontal: 22, paddingTop: 8, paddingBottom: 10 },
   titleHeaderRow: { position: 'relative', flexDirection: 'row', alignItems: 'center', height: 46 },
   title: { fontSize: 32, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 42 },
   subtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+
+  // Header — vibe detail mode
+  detailHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingTop: 4, paddingBottom: 8,
+  },
+  backBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chev: { fontSize: 28, color: COLORS.dark, fontWeight: '400', lineHeight: 28 },
+  detailTitleWrap: { flex: 1, marginLeft: 4 },
+  detailTitle: {
+    fontSize: 30, color: COLORS.dark, letterSpacing: -0.4, lineHeight: 36,
+    fontWeight: '700', // Caveat fallback
+  },
+  detailMood: { fontSize: 13, color: '#888', fontStyle: 'italic', marginTop: 2 },
+
+  // Vibe grid — "what vibe are we on?" landing
+  gridScroll: { paddingHorizontal: 22, paddingTop: 14, paddingBottom: 60 },
+  gridPrompt: {
+    fontSize: 22, color: COLORS.dark, letterSpacing: -0.3, lineHeight: 28,
+    fontWeight: '700', // Caveat fallback
+    marginBottom: 14,
+  },
+  vibeGrid: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 16,
+  },
+  vibeCell: { width: '31%', alignItems: 'center' },
+  vibeTile: {
+    width: '100%', aspectRatio: 1,
+    borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.06, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2,
+  },
+  vibeTileEmoji: { fontSize: 38 },
+  vibeCellLabel: {
+    fontSize: 12, color: COLORS.dark, fontWeight: '600',
+    marginTop: 8, textAlign: 'center', letterSpacing: -0.1,
+  },
+
+  seeAllLink: {
+    alignSelf: 'center', marginTop: 28,
+    paddingVertical: 8, paddingHorizontal: 14,
+  },
+  seeAllText: { fontSize: 14, color: COLORS.coral, fontWeight: '700', letterSpacing: 0.1 },
+
+  gridFooterAccents: { height: 60, position: 'relative', marginTop: 12 },
+
+  // Vibe-detail eyebrow above the activity list
+  ideasEyebrow: {
+    fontSize: 11, fontWeight: '700', letterSpacing: 2, color: COLORS.deepCoral,
+    textTransform: 'uppercase',
+    marginTop: 10, marginBottom: 12,
+  },
 
   // Search
   searchWrap: {
